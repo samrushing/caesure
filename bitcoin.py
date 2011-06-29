@@ -583,7 +583,6 @@ if __name__ == '__main__':
         import monitor
         # for now, there's a single global connection.  later we'll have a bunch.
         bitcoin_connection = None
-        c = command_server()
         m = monitor.monitor_server()
         asyncore.loop()
     else:
