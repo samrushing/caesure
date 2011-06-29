@@ -1,0 +1,12 @@
+python bitcoin client
+
+requirements: a relatively recent python, probably 2.5+ or so.
+
+status:
+can connect to a server - preferably on the same host - and download the latest blocks.
+stores the block chain in a simple flat file.
+doesn't understand ecdsa yet, so it can't actually touch real bitcoins.
+
+note: this is *not* a JSON/RPC client, it's an implementation of the bitcoin protocol.
+
+Help Fund This Project! 1Ncui8YjT7JJD91tkf42dijPnqywbupf7w
