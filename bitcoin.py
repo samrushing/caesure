@@ -435,6 +435,7 @@ class asyn_conn (asynchat.async_chat):
         elif self.state == CHECKSUM:
             magic, command, length = self.header
             self.checksum, = struct.unpack ('<I', data)
+            # XXX actually verify the checksum, duh
             self.state_payload (length)
         elif self.state == PAYLOAD:
             magic, command, length = self.header
@@ -512,105 +513,6 @@ class asyn_conn (asynchat.async_chat):
             del self.pending[name]
         the_block_db.add (name, data)
         self.kick_seeking()
-
-# this is a simple command channel allowing you to
-#   control the client[s] while it's running.
-
-class command_server (asyncore.dispatcher):
-    def __init__ (self):
-        self.sock = socket.socket (socket.AF_INET, socket.SOCK_STREAM)
-        asyncore.dispatcher.__init__ (self, self.sock)
-        self.set_reuse_addr()
-        self.bind (('', 9000))
-        self.listen (5)
-        
-    def handle_accept (self):
-        pair = self.accept()
-        if pair:
-            conn, addr = pair
-            command_channel (conn, addr)
-
-class command_channel (asynchat.async_chat):
-
-    def __init__ (self, conn, addr):
-        asynchat.async_chat.__init__ (self, conn)
-        self.ibuffer = []
-        self.set_terminator ('\r\n')
-        cmds = [x[4:] for x in dir (self) if x.startswith ('cmd_')]
-        self.push ('bitcoin back door. %r\r\n' % cmds)
-        
-    def collect_incoming_data (self, data):
-        self.ibuffer.append (data)
-
-    def found_terminator (self):
-        global bitcoin_connection
-        data, self.ibuffer = ''.join (self.ibuffer), []
-        # we now have a command in <data>
-        parts = data.split()
-        cmd = parts[0].lower()
-        method = 'cmd_%s' % (cmd,)
-        if hasattr (self, method):
-            getattr (self, method) (parts)
-
-    def cmd_connect (self, parts):
-        global bitcoin_connection
-        if bitcoin_connection:
-            self.push ('already connected!\r\n')
-        else:
-            self.push ('connecting...\r\n')
-            bitcoin_connection = asyn_conn()
-
-    def cmd_close (self, parts):
-        global bitcoin_connection
-        if not bitcoin_connection:
-            self.push ('no connection!\r\n')
-        else:
-            self.push ('closing...\r\n')
-            bitcoin_connection.close()
-            bitcoin_connection = None
-
-    def cmd_quit (self, parts):
-        self.push ('shutting down...\r\n')
-        raise SystemExit
-
-    def cmd_getdata (self, parts):
-        global bitcoin_connection
-        # getdata TX|BLOCK <hash>
-        if not bitcoin_connection:
-            self.push ('no connection!\r\n')
-        else:
-            self.push ('requesting %r\r\n' % (parts[1],))
-            _, kind, hash = parts
-            if kind.upper() not in ('TX', 'BLOCK'):
-                self.push ('say what? "%s"\r\n' % (kind,))
-            else:
-                kind = {'TX':1,'BLOCK':2}[kind.upper()]
-                # decode hash
-                hash = unhexify (hash, flip=True)
-                payload = [pack_var_int (1)]
-                payload.append (struct.pack ('<I32s', kind, hash))
-                packet = make_packet ('getdata', ''.join (payload))
-                bitcoin_connection.push (packet)
-
-    def cmd_getblocks (self, parts):
-        global bitcoin_connection
-        if not bitcoin_connection:
-            self.push ('no connection!\r\n')
-        else:
-            self.push ('requesting block chain\r\n')
-            # getblocks asks the other side for a *list* of blocks, up to 500 long.
-            # to fetch those blocks you need to emit <getdata>.
-            # (can we fetch the entire chain of just names?)
-            # where do we start
-            start = the_block_db.last_block
-            payload = ''.join ([
-                struct.pack ('<I', bitcoin_connection.version),
-                pack_var_int (1),
-                unhexify (start, flip=True),
-                '\x00' * 32,
-                ])
-            packet = make_packet ('getblocks', payload)
-            bitcoin_connection.push (packet)
 
 # ================================================================================
 #              commands meant to be used from the monitor
