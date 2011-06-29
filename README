@@ -9,4 +9,43 @@ doesn't understand ecdsa yet, so it can't actually touch real bitcoins.
 
 note: this is *not* a JSON/RPC client, it's an implementation of the bitcoin protocol.
 
+usage:
+$ python bitcoin.py -s
+
+from another terminal:
+$ telnet localhost 8023
+
+you'll get a python prompt.
+to connect to bitcoin running on the local host:
+>>> connect()
+
+to fetch the block chain:
+>>> getblocks()
+
+to fetch a TX or BLOCK manually:
+>>> getdata ('TX', <hash-string>)
+
+Rather than running a server, you can just start up python and play with the block
+database:
+$ python -i bitcoin.py
+reading block headers...
+last block (133781): 000000000000034059baa57fa45bc82ad533ffdf5e8725f02bc3c7b73cdff982
+133782 133782 133782 133782 133782
+>>> 
+
+location of a block in the file:
+>>> the_block_db.blocks['000000000000034059baa57fa45bc82ad533ffdf5e8725f02bc3c7b73cdff982']
+326071092L
+
+previous block:
+>>> the_block_db.prev['000000000000034059baa57fa45bc82ad533ffdf5e8725f02bc3c7b73cdff982']
+'000000000000068e425dac7a69de7a521db061db265b04c4924b4bafd578f339'
+
+by number:
+>>> the_block_db.num_block[1000]
+'00000000c937983704a73af28acdec37b049d214adbda81d7e2a3dd146f6ed09'
+>>> the_block_db.block_num[_]
+1000
+>>> 
+
 Help Fund This Project! 1Ncui8YjT7JJD91tkf42dijPnqywbupf7w
