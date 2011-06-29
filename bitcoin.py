@@ -305,6 +305,8 @@ class block_db:
         return open (path).read (80)
 
     def build_block_chain (self):
+        if not os.path.isfile ('blocks.bin'):
+            open ('blocks.bin', 'wb').write('')
         file = open ('blocks.bin', 'rb')
         print 'reading block headers...'
         file.seek (0)
@@ -312,6 +314,8 @@ class block_db:
         name = '00' * 32
         self.next[name] = genesis_block_hash
         self.prev[genesis_block_hash] = name
+        self.block_num[genesis_block_hash] = 0
+        self.num_block[0] = genesis_block_hash
         while 1:
             pos = file.tell()
             size = file.read (8)
