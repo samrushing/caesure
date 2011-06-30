@@ -21,7 +21,7 @@ from pprint import pprint as pp
 
 W = sys.stderr.write
 
-b58_digits = '123456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ'
+b58_digits = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
 def base58_encode (n):
     l = []
@@ -30,19 +30,45 @@ def base58_encode (n):
         l.insert (0, (b58_digits[r]))
     return ''.join (l)
 
+def base58_decode (s):
+    n = 0
+    for ch in s:
+        n *= 58
+        digit = b58_digits.index (ch)
+        n += digit
+    return n
+
 def dhash (s):
     return sha256(sha256(s).digest()).digest()
 
 def rhash (s):
-    h0 = sha256 (s)
     h1 = hashlib.new ('ripemd160')
-    h1.update (h0.digest())
+    h1.update (sha256(s).digest())
     return h1.digest()
 
 def dhash_check (h):
     return struct.unpack ('<I', h[:4])[0]
 
+#'1Ncui8YjT7JJD91tkf42dijPnqywbupf7w'
+#'\xed%3\x12/\xfd\x7f\x07$\xc4$Y\x92\x06\xcc\xb2>\x89\xd6\xf7'
+
+def key_to_address (s):
+    checksum = dhash ('\x00' + s)[:4]
+    return '1' + base58_encode (
+        int ('0x' + (s + checksum).encode ('hex_codec'), 16)
+        )
+
+def address_to_key (s):
+    # strip off leading '1'
+    s = ('%x' % base58_decode (s[1:])).decode ('hex_codec')
+    hash160, check0 = s[:-4], s[-4:]
+    check1 = dhash ('\x00' + hash160)[:4]
+    if check0 != check1:
+        raise BadAddress (s)
+    return hash160
+
 # for some reason many hashes are reversed, dunno why.
+# XXX figure out how to nip this as early as possible so we can use encode/decode.
 def hexify (s, flip=False):
     r = ['%02x' % ord (ch) for ch in s]
     if flip:
@@ -155,9 +181,10 @@ def unpack_tx (data, pos):
         pos.incr (script_length)
         sequence, = unpack_pos ('<I', data, pos)
         print 'outpoint=', (hexify (outpoint[0]), outpoint[1])
-        print 'script_length=', script_length
-        print 'script=', hexify (script)
+        #print 'script_length=', script_length
+        #print 'script=', hexify (script)
         print 'sequence=', sequence
+        parse_iscript (script)
     txout_count = unpack_var_int (data, pos)
     for i in range (txout_count):
         print 'output #%d' % (i,)
@@ -166,10 +193,29 @@ def unpack_tx (data, pos):
         pk_script = data[pos.val:pos.val+pk_script_length]
         pos.incr (pk_script_length)
         print 'value = %d.%08d' % divmod (value, 100000000)
-        print 'pk_script_length=', pk_script_length
-        print 'pk_script=', hexify (pk_script)
+        #print 'pk_script_length=', pk_script_length
+        #print 'pk_script=', hexify (pk_script)
+        parse_oscript (pk_script)
     lock_time, = unpack_pos ('<I', data, pos)
     print 'lock_time=', lock_time
+
+def parse_iscript (s):
+    # these tend to be push, push
+    s0 = ord (s[0])
+    if s0 > 0 and s0 < 76:
+        # specifies the size of the first key
+        k0 = s[1:1+s0]
+        print 'k0:', hexify (k0, True)
+        s1 = ord (s[1+s0])
+        if s1 > 0 and s1 < 76:
+            k1 = s[2+s0:2+s0+s1]
+            print 'k1:', hexify (k1, True)
+
+def parse_oscript (s):
+    if (ord(s[0]) == 118 and ord(s[1]) == 169 and ord(s[-2]) == 136 and ord(s[-1]) == 172):
+        size = ord(s[2])
+        addr = key_to_address (s[3:size+3])
+        print 'OP_DUP OP_HASH160 %s OP_EQUALVERIFY OP_CHECKSIG' % addr
 
 def read_ip_addr (s):
     r = socket.inet_ntop (socket.AF_INET6, s)
@@ -257,7 +303,9 @@ def unpack_getdata (data, pos):
     # identical to INV
     return unpack_inv (data, pos)
 
-def unpack_block (data, pos):
+def unpack_block (data, pos=None):
+    if pos is None:
+        pos = position()
     version, prev_block, merkle_root, timestamp, bits, nonce = unpack_pos ('<I32s32sIII', data, pos)
     count = unpack_var_int (data, pos)
     print '----- block %d transactions ------' % (count,)
@@ -291,7 +339,8 @@ class link:
 
 class block_db:
 
-    def __init__ (self):
+    def __init__ (self, read_only=False):
+        self.read_only = read_only
         self.blocks = {}
         self.prev = {}
         self.next = {}
@@ -341,8 +390,17 @@ class block_db:
         print 'last block (%d): %s' % (i, name)
         print len(self.blocks), len(self.prev), len (self.next), len (self.block_num), len (self.num_block)
         file.close()
-        # reopen in append mode
-        self.file = open ('blocks.bin', 'ab')
+        if not self.read_only:
+            # reopen in append mode
+            self.file = open ('blocks.bin', 'ab')
+        self.read_only_file = open ('blocks.bin', 'rb')
+
+    def __getitem__ (self, name):
+        pos =  self.blocks[name]
+        self.read_only_file.seek (pos)
+        size = self.read_only_file.read (8)
+        size, = struct.unpack ('<Q', size)
+        return self.read_only_file.read (size)
 
     def add (self, name, block):
         if self.prev.has_key (name):
@@ -371,8 +429,6 @@ class block_db:
 
     def has_key (self, name):
         return self.prev.has_key (name)
-
-the_block_db = block_db()
 
 class asyn_conn (asynchat.async_chat):
 
@@ -582,8 +638,10 @@ if __name__ == '__main__':
     if '-s' in sys.argv:
         import monitor
         # for now, there's a single global connection.  later we'll have a bunch.
+        the_block_db = block_db()
         bitcoin_connection = None
         m = monitor.monitor_server()
         asyncore.loop()
     else:
-        pass
+        the_block_db = block_db (read_only=True)
+        db = the_block_db       # alias
