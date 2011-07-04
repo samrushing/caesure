@@ -125,6 +125,21 @@ class wallet:
                 addr = key_to_address (pub0)
                 self.addrs[addr] = public_key
 
+    def new_key (self):
+        k = KEY()
+        k.generate()
+        key = k.get_privkey()
+        size = struct.pack ('<Q', len(key))
+        file = open (self.path, 'ab')
+        file.write (size)
+        file.write (key)
+        file.close()
+        pubkey = k.get_pubkey()
+        addr = key_to_address (rhash (pubkey))
+        self.addrs[addr] = pubkey
+        self.keys[pubkey] = key
+        return addr
+
     def check_tx (self, tx):
         # did we receive any moneys?
         i = 0
@@ -185,7 +200,7 @@ class KEY:
         self.k = ssl.EC_KEY_new_by_curve_name (NID_secp256k1)
 
     def generate (self):
-        return ssl.EC_KEY_generate_key (k)
+        return ssl.EC_KEY_generate_key (self.k)
 
     def set_privkey (self, key):
         self.mb = ctypes.create_string_buffer (key)
@@ -326,6 +341,7 @@ class TX:
         result.append (struct.pack ('<I', self.lock_time))
         return ''.join (result)
 
+    # Hugely Helpful: http://forum.bitcoin.org/index.php?topic=2957.20
     def verify (self, index):
         tx0 = self.copy()
         iscript = tx0.inputs[index][1]
