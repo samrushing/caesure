@@ -66,9 +66,20 @@ last block (134756): 00000000000009988eba9d676cf41707b91777f7a2191b8b2c1391d6e87
 '18fa6HSDG8QiwGXo34bZPZHwsqhGT28mWT'
 >>> script.encode ('hex_codec')
 '76a91454144f61e0b2b67d1762e10b50e550b345c4f9e088ac'
+
+--- verify a transaction ---
+
 >>> tx.verify (0)
-2497696
 1
+
+--- generate a new key/address ---
+
+>>> the_wallet.new_key()
+'1AATJKbiuxUA6XJSJWSe6DVQx26ARdF1ex'
+
+>>> the_wallet['1AATJKbiuxUA6XJSJWSe6DVQx26ARdF1ex']
+<__main__.KEY instance at 0x1e9f08>
+
 
 --------------------------------------------------------------------------------
 
