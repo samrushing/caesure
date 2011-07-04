@@ -1,15 +1,16 @@
 python bitcoin client
 
-requirements: a relatively recent python, probably 2.5+ or so.
+requirements: a relatively recent python, probably 2.5+ or so, an openssl library.
 
 status:
 can connect to a server - preferably on the same host - and download the latest blocks.
 stores the block chain in a simple flat file.
-doesn't understand ecdsa yet, so it can't actually touch real bitcoins.
 
 note: this is *not* a JSON/RPC client, it's an implementation of the bitcoin protocol.
 
 usage:
+--------------------------------------------------------------------------------
+
 $ python bitcoin.py -s
 
 from another terminal:
@@ -25,27 +26,50 @@ to fetch the block chain:
 to fetch a TX or BLOCK manually:
 >>> getdata ('TX', <hash-string>)
 
+Note: these methods merely tell the bitcoin connection to do things, they don't
+return data directly to you.
+
+--------------------------------------------------------------------------------
+
+Wallet:
+This isn't very useful yet, but the code does know how to read its own wallet format:
+$ python bitcoin.py -w wallet.bin
+NOTE: NOT COMPATIBLE WITH THE OFFICIAL CLIENT WALLET.DAT
+
+You can copy your private keys out of 'wallet.dat' using the 'scan_wallet.py' script.
+
+--------------------------------------------------------------------------------
+
 Rather than running a server, you can just start up python and play with the block
 database:
-$ python -i bitcoin.py
+$ python -i bitcoin.py -w wallet.bin 
 reading block headers...
-last block (133781): 000000000000034059baa57fa45bc82ad533ffdf5e8725f02bc3c7b73cdff982
-133782 133782 133782 133782 133782
->>> 
+last block (134756): 00000000000009988eba9d676cf41707b91777f7a2191b8b2c1391d6e87f414b
+134757 134757 134757 134757 134757
+>>> unpack_block (db['00000000000009988eba9d676cf41707b91777f7a2191b8b2c1391d6e87f414b'])
+<__main__.BLOCK instance at 0x3e62e18>
+>>> b = _
+>>> b.transactions[0]
+<__main__.TX instance at 0x1e9418>
+>>> b.transactions[0].inputs
+[(('\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', 4294967295L), '\x04\x12*\x0c\x1a\x02\xfc\x05', 4294967295L)]
+>>> b.transactions[0].outputs[0]
+(5005747348L, 'A\x044\xc5\x91\x1b\x02\xa9{44\xffJ\xc0\x0c\xd4\x04\xad\x1e\x97\x83\x12\x9b\x1a\x97q\xe2q\x10\xfb`\xc6\xe3l\x93\xb7\xa4\xe5\xb3\x83\xb3%7\x844\xea\xa4)W\xfb\xa1\xf3\xa6/\xed\xef\xe3\x88"\x02\x81|i\x86\x02\xcf\xac')
+>>> value, script = _
+>>> '%08d.%d' % (divmod (5005747348L, 100000000))
+'00000050.5747348'
+>>> tx = b.transactions[1]
+>>> tx.outputs
+[(98000000, 'v\xa9\x14T\x14Oa\xe0\xb2\xb6}\x17b\xe1\x0bP\xe5P\xb3E\xc4\xf9\xe0\x88\xac')]
+>>> value, script = tx.outputs[0]
+>>> parse_oscript (script)
+'18fa6HSDG8QiwGXo34bZPZHwsqhGT28mWT'
+>>> script.encode ('hex_codec')
+'76a91454144f61e0b2b67d1762e10b50e550b345c4f9e088ac'
+>>> tx.verify (0)
+2497696
+1
 
-location of a block in the file:
->>> the_block_db.blocks['000000000000034059baa57fa45bc82ad533ffdf5e8725f02bc3c7b73cdff982']
-326071092L
-
-previous block:
->>> the_block_db.prev['000000000000034059baa57fa45bc82ad533ffdf5e8725f02bc3c7b73cdff982']
-'000000000000068e425dac7a69de7a521db061db265b04c4924b4bafd578f339'
-
-by number:
->>> the_block_db.num_block[1000]
-'00000000c937983704a73af28acdec37b049d214adbda81d7e2a3dd146f6ed09'
->>> the_block_db.block_num[_]
-1000
->>> 
+--------------------------------------------------------------------------------
 
 Help Fund This Project! 1Ncui8YjT7JJD91tkf42dijPnqywbupf7w
