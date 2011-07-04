@@ -84,18 +84,16 @@ def address_to_key (s):
 # for some reason many hashes are reversed, dunno why.  [this may just be block explorer]
 # XXX figure out how to nip this as early as possible so we can use encode/decode.
 def hexify (s, flip=False):
-    r = ['%02x' % ord (ch) for ch in s]
     if flip:
-        r.reverse()
-    return ''.join (r)
+        return s[::-1].encode ('hex_codec')
+    else:
+        return s.encode ('hex_codec')
 
 def unhexify (s, flip=False):
-    r = []
-    for i in range (0, len (s), 2):
-        r.append (chr (string.atoi (s[i:i+2], 16)))
     if flip:
-        r.reverse()
-    return ''.join (r)
+        return s.decode ('hex_codec')[::-1]
+    else:
+        return s.decode ('hex_codec')
 
 def frob_hash (s):
     r = []
@@ -188,7 +186,6 @@ class wallet:
 #        ECDSA
 # --------------------------------------------------------------------------------
 
-import ctypes
 ssl = ctypes.cdll.LoadLibrary (ctypes.util.find_library ('ssl'))
 
 # this specifies the curve used with ECDSA.
