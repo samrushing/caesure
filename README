@@ -13,7 +13,7 @@ note: this is *not* a JSON/RPC client, it's an implementation of the bitcoin pro
 usage:
 --------------------------------------------------------------------------------
 
-$ python bitcoin.py -s
+$ python bitcoin.py -s YOUR.EXTERNAL.IP.HERE
 
 from another terminal:
 $ telnet localhost 8023
