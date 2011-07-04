@@ -6,6 +6,8 @@ status:
 can connect to a server - preferably on the same host - and download the latest blocks.
 stores the block chain in a simple flat file.
 
+name: assuming this gets to the point where it needs a real name, I choose 'caesure'.
+
 note: this is *not* a JSON/RPC client, it's an implementation of the bitcoin protocol.
 
 usage:
