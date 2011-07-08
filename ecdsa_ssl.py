@@ -8,6 +8,15 @@ ssl = ctypes.cdll.LoadLibrary (ctypes.util.find_library ('ssl'))
 # this specifies the curve used with ECDSA.
 NID_secp256k1 = 714 # from openssl/obj_mac.h
 
+# Thx to Sam Devlin for the ctypes magic 64-bit fix.
+def check_result (val, func, args):
+    if val == 0:
+        raise ValueError
+    else:
+        return ctypes.c_void_p (val)
+ssl.EC_KEY_new_by_curve_name.restype = ctypes.c_void_p
+ssl.EC_KEY_new_by_curve_name.errcheck = check_result
+
 class KEY:
 
     def __init__ (self):
