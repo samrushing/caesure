@@ -22,7 +22,9 @@ class KEY:
     def __init__ (self):
         self.k = ssl.EC_KEY_new_by_curve_name (NID_secp256k1)
 
-    # XXX destructor!
+    def __del__ (self):
+        ssl.EC_KEY_free (self.k)
+        self.k = None
 
     def generate (self):
         return ssl.EC_KEY_generate_key (self.k)
