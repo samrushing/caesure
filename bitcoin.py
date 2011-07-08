@@ -38,7 +38,6 @@ from pprint import pprint as pp
 BITCOIN_PORT = 8333
 BITCOIN_MAGIC = '\xf9\xbe\xb4\xd9'
 BLOCKS_PATH = 'blocks.bin'
-WALLET_PATH = 'wallet.bin'
 genesis_block_hash = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'
 
 
@@ -994,7 +993,6 @@ if __name__ == '__main__':
         BITCOIN_PORT = 18333
         BITCOIN_MAGIC = '\xfa\xbf\xb5\xda'
         BLOCKS_PATH = 'blocks.testnet.bin'
-        wallet_path = 'wallet.testnet.bin'
         genesis_block_hash = '00000007199508e34a9ff81e6ec0c477a4cccff2a4767a8eee39c11db367b008'
 
     # mount the block database
