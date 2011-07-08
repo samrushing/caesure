@@ -73,6 +73,15 @@ removed completely - probably replaced by a web admin interface.
 
 --------------------------------------------------------------------------------
 
+testnet.
+
+To use testnet, give the '-t' argument along with '-c'.  This will change several
+global values, and should NOT impact your block database - it uses different
+filenames.  HOWEVER you should use a different wallet path (the '-w' argument).
+
+--------------------------------------------------------------------------------
+
+
 Wallet:
 
 To have access to a wallet, use: [-w <wallet-path>]
