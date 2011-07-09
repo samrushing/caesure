@@ -31,13 +31,11 @@ class KEY:
 
     def set_privkey (self, key):
         self.mb = ctypes.create_string_buffer (key)
-        self.kp = ctypes.c_void_p (self.k)
-        print ssl.d2i_ECPrivateKey (ctypes.byref (self.kp), ctypes.byref (ctypes.pointer (self.mb)), len(key))
+        print ssl.d2i_ECPrivateKey (ctypes.byref (self.k), ctypes.byref (ctypes.pointer (self.mb)), len(key))
 
     def set_pubkey (self, key):
         self.mb = ctypes.create_string_buffer (key)
-        self.kp = ctypes.c_void_p (self.k)
-        print ssl.o2i_ECPublicKey (ctypes.byref (self.kp), ctypes.byref (ctypes.pointer (self.mb)), len(key))
+        print ssl.o2i_ECPublicKey (ctypes.byref (self.k), ctypes.byref (ctypes.pointer (self.mb)), len(key))
 
     def get_privkey (self):
         size = ssl.i2d_ECPrivateKey (self.k, 0)
