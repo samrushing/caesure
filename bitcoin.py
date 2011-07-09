@@ -30,6 +30,7 @@ import sys
 
 import asyncore
 import asynchat
+import asynhttp
 
 from hashlib import sha256
 from pprint import pprint as pp
@@ -39,9 +40,6 @@ BITCOIN_PORT = 8333
 BITCOIN_MAGIC = '\xf9\xbe\xb4\xd9'
 BLOCKS_PATH = 'blocks.bin'
 genesis_block_hash = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'
-
-
-W = sys.stderr.write
 
 b58_digits = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
@@ -405,12 +403,6 @@ def pack_version (me_addr, you_addr, nonce):
     data += struct.pack ('<I', start_height)
     return make_packet ('version', data)
 
-# *today*, every script is pretty much the same:
-# tx script does this: push 73 bytes, push 65 bytes.
-# pk_script does: OP_DUP, OP_HASH160, push 20 bytes, OP_EQUALVERIFY, OP_CHECKSIG
-#
-# XXX generation looks like an ip transaction, so they're not completely uncommon.
-
 class TX:
     def __init__ (self, inputs, outputs, lock_time):
         self.inputs = inputs
@@ -550,7 +542,6 @@ def parse_oscript (s):
         size = ord(s[2])
         addr = key_to_address (s[3:size+3])
         assert (size+5 == len(s))
-        #print 'OP_DUP OP_HASH160 %s OP_EQUALVERIFY OP_CHECKSIG' % addr
         return addr
     else:
         return None
@@ -584,7 +575,6 @@ def pack_var_int (n):
 def pack_var_str (s):
     return pack_var_int (len (s)) + s
 
-# will be used for packets other than verack
 def make_packet (command, payload):
     assert (len(command) < 12)
     lc = len(command)
@@ -792,9 +782,10 @@ def make_verack():
         '\x00\x00\x00\x00'               # payload length == 0
         )
 
-HEADER   = 0
-CHECKSUM = 1
-PAYLOAD  = 2
+# state machine.
+HEADER   = 0 # waiting for a header
+CHECKSUM = 1 # waiting for a checksum
+PAYLOAD  = 2 # waiting for a payload
 
 class BadState (Exception):
     pass
@@ -1015,9 +1006,9 @@ if __name__ == '__main__':
             # for now, there's a single global connection.  later we'll have a bunch.
             bc = connection (other_addr)
             m = monitor.monitor_server()
-            # for a future web admin
-            #import medusa.http_server
-            #hs = medusa.http_server.http_server ('127.0.0.1', 8380)
+            h = asynhttp.http_server ('127.0.0.1', 8380)
+            import webadmin
+            h.install_handler (webadmin.handler())
             asyncore.loop()
     else:
         # database browsing mode
