@@ -11,9 +11,7 @@ requirements: a relatively recent python, probably 2.5+ or so
 either: A) an openssl library.
         B) the pure-python ecdsa package.
 
-I have tested this code using SSL on osx 10.6, linux ubuntu, and freebsd-7.  The ctypes interface to
-openssl fails on my freebsd-7 box for reasons that I do not understand.  If this happens to you
-comment out the line that loads the KEY class from ecdsa_ssl and uncomment the line for ecdsa_pure.
+I have tested this code using openssl on osx 10.6 (64-bit), linux ubuntu (32-bit), and freebsd-7 (64-bit).
 
 status:
 
