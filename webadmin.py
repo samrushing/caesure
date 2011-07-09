@@ -126,6 +126,13 @@ class handler:
                 RP ('&nbsp;&nbsp;<a href="/admin/block/%d">Prev Block</a>' % (num-1,))
             if num < db.block_num[db.last_block]:
                 RP ('&nbsp;&nbsp;<a href="/admin/block/%d">Next Block</a><br>' % (num+1,))
+            RP ('\r\n'.join ([
+                        '<br>prev_block: %s' % (hexify (b.prev_block),),
+                        '<br>merkle_root: %s' % (hexify (b.merkle_root),),
+                        '<br>timestamp: %s' % (b.timestamp,),
+                        '<br>bits: %s' % (b.bits,),
+                        '<br>nonce: %s' % (b.nonce,),
+                        ]))
             RP ('<pre>%d transactions\r\n' % len(b.transactions))
             for tx in b.transactions:
                 RP ('tx: %s\r\n' % (hexify (dhash (tx.render()))))
