@@ -74,7 +74,7 @@ removed completely - probably replaced by a web admin interface.
 web admin.
 
 In client mode ('-c'), a web admin server is also started up on localhost:
-try http://localhost:8380/admin
+try http://localhost:8380/admin/ (note: that trailing slash is important)
 
 --------------------------------------------------------------------------------
 
