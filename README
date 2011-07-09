@@ -71,6 +71,13 @@ removed completely - probably replaced by a web admin interface.
 
 --------------------------------------------------------------------------------
 
+web admin.
+
+In client mode ('-c'), a web admin server is also started up on localhost:
+try http://localhost:8380/admin
+
+--------------------------------------------------------------------------------
+
 testnet.
 
 To use testnet, give the '-t' argument along with '-c'.  This will change several
@@ -78,7 +85,6 @@ global values, and should NOT impact your block database - it uses different
 filenames.  HOWEVER you should use a different wallet path (the '-w' argument).
 
 --------------------------------------------------------------------------------
-
 
 Wallet:
 
