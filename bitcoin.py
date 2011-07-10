@@ -69,8 +69,15 @@ def rhash (s):
 def bcrepr (n):
     return '%d.%08d' % divmod (n, 100000000)
 
+# https://en.bitcoin.it/wiki/Proper_Money_Handling_(JSON-RPC)
+def float_to_btc (f):
+    return long (round(f * 1e8))
+
 #'1Ncui8YjT7JJD91tkf42dijPnqywbupf7w'
 #'\xed%3\x12/\xfd\x7f\x07$\xc4$Y\x92\x06\xcc\xb2>\x89\xd6\xf7'
+
+class BadAddress (Exception):
+    pass
 
 def key_to_address (s):
     checksum = dhash ('\x00' + s)[:4]
@@ -198,6 +205,7 @@ class wallet:
         return addr
 
     def check_tx (self, tx):
+        dirty = False
         # did we send money somewhere?
         for outpoint, iscript, sequence in tx.inputs:
             sig, pubkey = parse_iscript (iscript)
@@ -210,6 +218,7 @@ class wallet:
                         value = self.value[addr][outpoint]
                         self.value[addr][outpoint] = 0
                         self.total_btc -= value
+                        dirty = True
                     print 'SEND: %s %s' % (bcrepr (value), addr,)
                     #import pdb; pdb.set_trace()
         # did we receive any moneys?
@@ -226,10 +235,13 @@ class wallet:
                 else:
                     self.value[addr][outpoint] = value
                     self.total_btc += value
+                    dirty = True
                 print 'RECV: %s %s' % (bcrepr (value), addr)
                 rtotal += 1
             index += 1
             i += 1
+        if dirty:
+            self.write_value_cache()
         return rtotal
 
     def dump_value (self):
@@ -276,7 +288,10 @@ class wallet:
         if total > self.total_btc:
             raise ValueError ("not enough funds")
         elif value <= 0:
-            raise ValueError ("zero or negative value?")            
+            raise ValueError ("zero or negative value?")
+        elif value < 1000000 and fee < 50000:
+            # any output less than one cent needs a fee.
+            raise ValueError ("fee too low")
         else:
             # now, assemble the total
             sum = 0
@@ -299,7 +314,6 @@ class wallet:
             inputs0 = []
             keys = []
             for outpoint, v0, addr in inputs:
-                print 'input', v0
                 pubkey = self.addrs[addr]
                 keys.append (self[addr])
                 iscript = make_iscript ('bogus-sig', pubkey)
@@ -314,8 +328,16 @@ class wallet:
             return tx
 
     def get_change_addr (self):
-        # for now, just generate a new key.
-        # later, hunt for empty keys?
+        # look for an empty key
+        for addr, outpoints in self.value.iteritems():
+            empty = True
+            for outpoint, v0 in outpoints.iteritems():
+                if v0 != 0:
+                    empty = False
+                    break
+            if empty:
+                # found one
+                return addr
         return self.new_key()
 
 # --------------------------------------------------------------------------------
