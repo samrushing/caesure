@@ -1,6 +1,6 @@
 # -*- Mode: Python -*-
 
-# I couldn't get the ctypes ssl code to work on my freebsd box.  This drop-in
+# If you can't (or don't want to) use the ctypes ssl code, this drop-in
 #   replacement uses the pure-python ecdsa package.  Note: it stores private keys
 #   using an OID to indicate the curve, while openssl puts the curve parameters
 #   in each key.  The ecdsa package doesn't understand that DER, though.  So if you
