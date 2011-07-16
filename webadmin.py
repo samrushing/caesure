@@ -8,21 +8,24 @@ from urllib import splitquery
 from urlparse import parse_qs
 from cgi import escape
 
-favicon = zlib.decompress (
-    '789ca552594f1351141ee3a32fc607e3a32f2e3fc168a2a6893e49e242884113d4288ab6a10bc2a8a5553add66693b5da69db6d399cedaa1a57491ae208b5096'
-    '8284e08a11a998b8fc0542e255e32ff0bb39f7e1dc9c73bef37d1782f680b37f3f04ee43d0bdbd10741082a0e320400a3a0cfdcdff01783bb0ef6ffc032b24f2'
-    'cf732f666a85728e93b908135686e5cdad4fd3b353f34bf3569bd58139a461a13a5e298ce57839e10ffbc4949094192a1ee8edefbdafefa9d4cbabebaf42b180'
-    '1d4734e7356734676f76df8873315e665d0422aa9c9c16245534c1a653a74fe9fbf4f34b8d483cecf6b8eeeaee52516a6e61968ed398174d8fa6224c40c9084e'
-    '1cb970b14d734e637c68bad3733bca451e3eee9b7e394d86c8d676cb1f26fbcdfd18898e16b3628a4f8d0857af771c3976f462fb2525ad5886cc4ec2363337b5'
-    'bbbbcbf28942295fa957e0c10117ee4cca1c58969598f6ab97794940dc481f6c8ab3513b3654ae95b6bf6e670b2304896d7cfc403311abcd627a6424299fc536'
-    'd876a90df560f589da958e2b3a83ce4f91a22a2ead2c6db53e4fcd4eb162c213209c9823955610b7cdd067d0eab59d5d9de56ab9587a7efdc63517ee4808cce2'
-    'f2c2c6c70db0efadee5bc6017db152ac4f5443d1206c19b0a388d9f64467d2365f354374f0e4e9133aa35654f9101dd01a1e08b2e0f113f9b15c3c191594a409'
-    '36989f9a079f998db01127f14f9f37f3853cfc0446bd6e92f2d6c66b1881755c6b373f838192f1640478045be06038e4f57b810ea54ae9dbf76fa010483a92cb'
-    'acbd5e6b2c34ec2e0450e224c61ff62018d2d3db435224701054e1243633f7b2f5a5e5225c8fadb09a517363a3e158880cfa80b3e230c708310b023477701247'
-    '33b42fe4f50489f537eb3f7efe9054c9812256bb050fa092caa73272b690f9cd8a8ff828af288bc572a13a511d2d64814d8df9c6cececee6d626ea71dfeceec2'
-    '7c4e51152ab50aea750aa924f83f7482020cc727eb933393c5725150442925adaeadbe7dffaeb9d224489c13d9c5e5c5a760a07b28c1c77999e3a45894a5d3d9'
-    'b4ac4a4a46612516f449cac9e5d56663b1210fcba01bf49ff8057db2cf3a'.decode ('hex_codec')
-    )
+favicon = (
+    'AAABAAEAEBAAAAEAGABoAwAAFgAAACgAAAAQAAAAIAAAAAEAGAAAAAAAAAMAABILAAASCwAAAAAA'
+    'AAAAAAD////////////u9PfK4u+gyeBCquNDptxiosNSr+KHwuPf5un+/f3/////////////////'
+    '///w9fd2u+JDq+Rhr9JdvOlsveBzutZQs+RVs+CRxtjH3OL19vb////////////i7fOVxuBOp9Rr'
+    'vuOT0+aW1eiW1eiW1eiT0+aT0+aV1emT0OOxztfz9PT////z9/luu+VKseWP0OSX1umW1umV1eiV'
+    '1eiW1umV1eiV1eiV1eiW1+qU0+W+1dz8+/ve6/JTr+Birc6DusqEvM2R0OKW1umT0uSIwtOT0uWV'
+    '1umV1OeBuMh4rLySxdTb5eeBvN1nstJHZW4XISQfLDBCX2iRz+GFvs8xRkyEvc6W1upagIwdKSwj'
+    'MjdTdoG109w2peNdsto8VFo1TFJnk6AbJimEvc6DvMwjMzeDvMyEvM0ZJCdYfomIwtN+tcaayNVd'
+    'sN12wt89V14XIiUrPUIuQUePzN6Du8sjMzeEvc5xobAWICODu8yX2OuW1+uRx9hap9B5w+A9Vl0j'
+    'MjY5UVgyR02U1OeDvMwkMzeFvs94q7sVHyF5rLyZ2+6V1eiRx9c+pd5XtOE7U1ojMjY1TFIuQkhd'
+    'hJAyR04OFBYzSU9ql6UwRUstQUdRdH5hi5eZyNabzehgsNZfiJQ7VVxIZnB6rr5gipY5Ulk9V146'
+    'U1txobCCustIZ3A9V19unqy009zq7/JfrtlftNqT0+aX2OuW1+qW1umW1uqW1uqW1uqV1umW1+qX'
+    '1+qW1+qZ0ODa5Of9/f2Qy+07p+F8v9iW1OaW1eiV1eiV1eiV1eiV1eiV1eiV1eiV1emT0eO81dz8'
+    '+/v////0+Pulyd1OoMlett+M0OeW1eeW1eeW1uiU0+aS0eSU1eiT0eOw0Nry9PT////////////6'
+    '+/uVyudIruZbqtBhttxluuF+xd9dtNxMqtmGv9bD2uDz9fX////////////////////5+/za5+6l'
+    'w9NLqNw8pd9ip8pKrOFvwOzV4un9/fz///////////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    ).decode ('base64')
 
 from __main__ import *
 
@@ -64,6 +67,8 @@ class handler:
                 self.menu (request)
                 try:
                     method (request, parts)
+                except SystemExit:
+                    raise
                 except:
                     request.push ('<h1>something went wrong</h1>')
                     request.push ('<pre>%r</pre>' % (asyncore.compact_traceback(),))
@@ -81,6 +86,8 @@ class handler:
             '&nbsp;&nbsp;<a href="/admin/block/">blocks</a>'
             '&nbsp;&nbsp;<a href="/admin/wallet/">wallet</a>'
             '&nbsp;&nbsp;<a href="/admin/send/">send</a>'
+            '&nbsp;&nbsp;<a href="/admin/connect/">connect</a>'
+            '&nbsp;&nbsp;<a href="/admin/shutdown/">shutdown</a>'
             )
 
     def cmd_status (self, request, parts):
@@ -90,21 +97,54 @@ class handler:
         RP ('<h3>last block</h3>')
         RP ('hash: %s' % (db.last_block,))
         RP ('<br>num: %d' % (db.block_num[db.last_block],))
+        if len (db.embargo):
+            RP ('<hr>%d blocks in embargo:' % (len(db.embargo),))
+            for name in db.embargo.keys():
+                RP ('<br>%s' % name)
+            RP ('<hr>')
         RP ('<h3>connection</h3>')
         RP (escape (repr (bc)))
-        RP ('<br>here: %s' % (bc.getsockname(),))
-        RP ('<br>there: %s' % (bc.getpeername(),))
+        try:
+            RP ('<br>here: %s' % (bc.getsockname(),))
+            RP ('<br>there: %s' % (bc.getpeername(),))
+        except:
+            RP ('<br>no connection</br>')
         RP ('<h3>wallet</h3>')
         if w is None:
             RP ('No Wallet')
         else:
             RP ('total btc: %s' % (bcrepr (w.total_btc),))
 
+    def dump_block (self, request, b):
+        RP = request.push
+        RP ('\r\n'.join ([
+                    '<br>prev_block: %s' % (hexify (b.prev_block),),
+                    '<br>merkle_root: %s' % (hexify (b.merkle_root),),
+                    '<br>timestamp: %s' % (b.timestamp,),
+                    '<br>bits: %s' % (b.bits,),
+                    '<br>nonce: %s' % (b.nonce,),
+                    ]))
+        RP ('<pre>%d transactions\r\n' % len(b.transactions))
+        for tx in b.transactions:
+            self.dump_tx (request, tx)
+        RP ('</pre>')
+        
     def cmd_block (self, request, parts):
         db = the_block_db
         RP = request.push
-        if len(parts) == 2 and len(parts[1]):
-            num = int (parts[1])
+        if len(parts) == 2:
+            if parts[1] == 'embargo':
+                if len(db.embargo):
+                    for name, block in db.embargo.iteritems():
+                        RP ('<hr>%s' % (name,))
+                        self.dump_block (request, unpack_block (block))
+                else:
+                    RP ('<h3>no blocks in embargo</h3>')
+                return
+            elif len(parts[1]):
+                num = int (parts[1])
+            else:
+                num = 0
         else:
             num = 0
         if db.num_block.has_key (num):
@@ -112,21 +152,12 @@ class handler:
             last_num = db.block_num[db.last_block]
             RP ('<br>&nbsp;&nbsp;<a href="/admin/block/0">First Block</a>')
             RP ('&nbsp;&nbsp;<a href="/admin/block/%d">Last Block</a><br>' % last_num,)
+            RP ('&nbsp;&nbsp;<a href="/admin/block/embargo">Embargo</a>')
             if num > 0:
                 RP ('&nbsp;&nbsp;<a href="/admin/block/%d">Prev Block</a>' % (num-1,))
             if num < db.block_num[db.last_block]:
                 RP ('&nbsp;&nbsp;<a href="/admin/block/%d">Next Block</a><br>' % (num+1,))
-            RP ('\r\n'.join ([
-                        '<br>prev_block: %s' % (hexify (b.prev_block),),
-                        '<br>merkle_root: %s' % (hexify (b.merkle_root),),
-                        '<br>timestamp: %s' % (b.timestamp,),
-                        '<br>bits: %s' % (b.bits,),
-                        '<br>nonce: %s' % (b.nonce,),
-                        ]))
-            RP ('<pre>%d transactions\r\n' % len(b.transactions))
-            for tx in b.transactions:
-                self.dump_tx (request, tx)
-            RP ('</pre>')
+            self.dump_block (request, b)
 
     def dump_tx (self, request, tx):
         RP = request.push
@@ -177,7 +208,7 @@ class handler:
                     if len(w.value[addr]):
                         RP ('<dt>addr: %s</dt>' % (addr,))
                         for (outpoint, index), value in w.value[addr].iteritems():
-                            RP ('<dd>%s %s:%d</dd>' % (bcrepr (value), outpoint.encode ('hex_codec'), index))
+                            RP ('<dd>%s %s:%d</dd>' % (bcrepr (value), outpoint.encode ('hex'), index))
                             sum += value
                     RP ('</dl>')
                 RP ('<br>total: %s' % (bcrepr(sum),))
@@ -196,24 +227,40 @@ class handler:
                     return False
         return True
 
+    def cmd_connect (self, request, parts):
+        path, params, query, fragment = request.split_uri()
+        RP = request.push
+        if query:
+            qparts = parse_qs (query[1:])
+            if self.match_form (qparts, ['host']):
+                global bc
+                if bc:
+                    bc.close()
+                bc = connection (qparts['host'][0])
+        RP ('<form>'
+            'IP Address: <input type="text" name="host" value="127.0.0.1"/><br/>'
+            '<input type="submit" value="Connect"/></form>')
+
     def cmd_send (self, request, parts):
         path, params, query, fragment = request.split_uri()
         RP = request.push
         w = the_wallet
-        print path, params, query, fragment
         if query:
             qparts = parse_qs (query[1:])
-            print qparts
             if self.match_form (qparts, ['amount', 'addr', 'fee']):
                 btc = float_to_btc (float (qparts['amount'][0]))
                 fee = float_to_btc (float (qparts['fee'][0]))
                 addr = qparts['addr'][0]
-                _ = address_to_key (addr) # verify it's a real address
-                tx = w.build_send_request (btc, addr, fee)
-                RP ('<br>send tx:<br><pre>')
-                self.dump_tx (request, tx)
-                self.pending_send.append (tx)
-                RP ('</pre>')
+                try:
+                    _ = address_to_key (addr) # verify it's a real address
+                except:
+                    RP ('<br><h3>Bad Address: %r</h3>' % escape (addr),)
+                else:
+                    tx = w.build_send_request (btc, addr, fee)
+                    RP ('<br>send tx:<br><pre>')
+                    self.dump_tx (request, tx)
+                    self.pending_send.append (tx)
+                    RP ('</pre>')
             elif self.match_form (qparts, ['cancel', 'index']):
                 index = int (qparts['index'][0])
                 del self.pending_send[index]
@@ -233,6 +280,8 @@ class handler:
             'To Address: <input type="text" name="addr" /><br/>'
             'Fee: <input type="text" name="fee" value="0.0005"><br/>'
             '<input type="submit" value="Send"/></form>'
+            '<p>Clicking "Send" will queue up the send request, where it can be examined and either confirmed or cancelled</p>'
+            '<p>Note: as currently designed, the bitcoin network may not forward transactions without fees, which could result in bitcoins being "stuck".  Sending tiny amounts (less than 0.01) requires a fee.  This includes the amount left in "change"!</p>'
             )
         if not self.pending_send:
             RP ('<h3>no pending send requests</h3>')
@@ -247,3 +296,10 @@ class handler:
                     '<input type="submit" name="confirm" value="confirm"/>'
                     '<input type="submit" name="cancel" value="cancel"/>'
                     '</form>' % (i,))
+
+    def cmd_shutdown (self, request, parts):
+        request.push ('<h3>Shutting down...</h3>')
+        if the_wallet:
+            the_wallet.write_value_cache()
+        import os
+        os._exit (os.EX_OK)
