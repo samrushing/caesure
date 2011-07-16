@@ -71,7 +71,7 @@ def bcrepr (n):
 
 # https://en.bitcoin.it/wiki/Proper_Money_Handling_(JSON-RPC)
 def float_to_btc (f):
-    return long (round(f * 1e8))
+    return long (round (f * 1e8))
 
 #'1Ncui8YjT7JJD91tkf42dijPnqywbupf7w'
 #'\xed%3\x12/\xfd\x7f\x07$\xc4$Y\x92\x06\xcc\xb2>\x89\xd6\xf7'
@@ -82,12 +82,12 @@ class BadAddress (Exception):
 def key_to_address (s):
     checksum = dhash ('\x00' + s)[:4]
     return '1' + base58_encode (
-        int ('0x' + (s + checksum).encode ('hex_codec'), 16)
+        int ('0x' + (s + checksum).encode ('hex'), 16)
         )
 
 def address_to_key (s):
     # strip off leading '1'
-    s = ('%x' % base58_decode (s[1:])).decode ('hex_codec')
+    s = ('%048x' % base58_decode (s[1:])).decode ('hex')
     hash160, check0 = s[:-4], s[-4:]
     check1 = dhash ('\x00' + hash160)[:4]
     if check0 != check1:
@@ -97,15 +97,15 @@ def address_to_key (s):
 # for some reason many hashes are reversed, dunno why.  [this may just be block explorer?]
 def hexify (s, flip=False):
     if flip:
-        return s[::-1].encode ('hex_codec')
+        return s[::-1].encode ('hex')
     else:
-        return s.encode ('hex_codec')
+        return s.encode ('hex')
 
 def unhexify (s, flip=False):
     if flip:
-        return s.decode ('hex_codec')[::-1]
+        return s.decode ('hex')[::-1]
     else:
-        return s.decode ('hex_codec')
+        return s.decode ('hex')
 
 def frob_hash (s):
     r = []
@@ -184,6 +184,7 @@ class wallet:
     def write_value_cache (self):
         cache_path = self.path + '.cache'
         file = open (cache_path, 'wb')
+        self.last_block = the_block_db.last_block_index
         pickle.dump ((self.last_block, self.total_btc, self.value), file)
         file.close()
 
@@ -252,11 +253,11 @@ class wallet:
             if len(self.value[addr]):
                 print 'addr: %s' % (addr,)
                 for (outpoint, index), value in self.value[addr].iteritems():
-                    print '  %s %s:%d' % (bcrepr (value), outpoint.encode ('hex_codec'), index)
+                    print '  %s %s:%d' % (bcrepr (value), outpoint.encode ('hex'), index)
                     sum += value
         print 'total: %s' % (bcrepr(sum),)
 
-    def scan_block_chain (self, start=128257): # 129666): # 134586):
+    def scan_block_chain (self, start):
         # scan the whole chain for an TX related to this wallet
         db = the_block_db
         blocks = db.num_block.keys()
@@ -310,7 +311,7 @@ class wallet:
             if sum > value:
                 # we need a place to dump the change
                 change_addr = self.get_change_addr()
-                outputs.append ((sum - value, change_addr))
+                outputs.append ((sum - total, change_addr))
             inputs0 = []
             keys = []
             for outpoint, v0, addr in inputs:
@@ -521,7 +522,6 @@ def unpack_tx (data, pos):
         script = data[pos.val:pos.val+script_length]
         pos.incr (script_length)
         sequence, = unpack_pos ('<I', data, pos)
-        parse_iscript (script)
         inputs.append ((outpoint, script, sequence))
     txout_count = unpack_var_int (data, pos)
     for i in range (txout_count):
@@ -529,7 +529,6 @@ def unpack_tx (data, pos):
         pk_script_length = unpack_var_int (data, pos)
         pk_script = data[pos.val:pos.val+pk_script_length]
         pos.incr (pk_script_length)
-        parse_oscript (pk_script)
         outputs.append ((value, pk_script))
     lock_time, = unpack_pos ('<I', data, pos)
     return TX (inputs, outputs, lock_time)
@@ -672,6 +671,16 @@ class BLOCK:
         self.nonce = nonce
         self.transactions = transactions
 
+    def get_hash (self):
+        return hexify (
+            struct.pack (
+                '<I32s32sIII', 
+                self.version, self.prev_block, self.merkle_root,
+                self.timestamp, self.bits, self.nonce
+                ),
+            True
+            )
+
 def unpack_block (data, pos=None):
     if pos is None:
         pos = position()
@@ -703,6 +712,8 @@ class block_db:
         self.last_block = '00' * 32
         self.build_block_chain()
         self.file = None
+        # hold new blocks until they link in
+        self.embargo = {}
 
     def get_header (self, name):
         path = os.path.join ('blocks', name)
@@ -735,8 +746,7 @@ class block_db:
                 # skip the rest of the block
                 file.seek (size-80, 1)
                 prev_block = hexify (prev_block, True)
-                # put me back once we fix the fucking fencepost bullshit
-                #assert prev_block == name
+                assert prev_block == name
                 name = hexify (dhash (header), True)
                 self.prev[name] = prev_block
                 self.next[prev_block] = name
@@ -754,41 +764,82 @@ class block_db:
         # reopen in append mode
         self.file = open (BLOCKS_PATH, 'ab')
 
-    def __getitem__ (self, name):
+    def get_block (self, name):
         pos =  self.blocks[name]
         self.read_only_file.seek (pos)
         size = self.read_only_file.read (8)
         size, = struct.unpack ('<Q', size)
-        return unpack_block (self.read_only_file.read (size))
+        return self.read_only_file.read (size)
+
+    def __getitem__ (self, name):
+        return unpack_block (self.get_block (name))
 
     def add (self, name, block):
-        if self.file is None:
-            self.open_for_append()
+        header = block[:80]
+        (version, prev_block, merkle_root,
+         timestamp, bits, nonce) = unpack_block_header (header)
+        prev_block = hexify (prev_block, True)
         if self.blocks.has_key (name):
             print 'ignoring block we already have:', name
         else:
-            (version, prev_block, merkle_root,
-             timestamp, bits, nonce) = unpack_block_header (block[:80])
-            prev_block = hexify (prev_block, True)
-            if self.has_key (prev_block) or name == genesis_block_hash:
-                size = len (block)
-                pos = self.file.tell()
-                self.file.write (struct.pack ('<Q', size))
-                self.file.write (block)
-                self.file.flush()
-                self.prev[name] = prev_block
-                self.next[prev_block] = name
-                self.blocks[name] = pos
-                print 'wrote block %s' % (name,)
-                i = self.block_num[prev_block]
-                self.block_num[name] = i+1
-                self.num_block[i+1] = name
-                self.last_block = name
-                self.last_block_index = i+1
-                if the_wallet:
-                    the_wallet.new_block (unpack_block (block))
+            for name0, block0 in self.embargo.iteritems():
+                if name0 == prev_block:
+                    # case 0: it links to an embargo block (normal case)
+                    #    * release that embargo block
+                    #    * toss any other embargo blocks
+                    #    * embargo this block
+                    self.release_embargo (name0, block0)
+                    # Note: a full node will need to inject any lost txs back into the network.
+                    if len (self.embargo) > 2:
+                        print 'tossing %d orphan embargo blocks' % (len(orphans),)
+                        del self.embargo[name]
+                        self.toss_orphan_blocks (self.embargo.items())
+                    self.embargo = { name:block }
+                    break
             else:
-                print 'cannot chain block %s' % (name,)
+                if prev_block == self.last_block:
+                    # case 1: it links to the last block (racing blocks / competing subnet)
+                    #    * add to the embargo list
+                    self.embargo[name] = block
+                else:
+                    # case 2: it links to neither (problem or lame hack attempt?)
+                    #    * toss it
+                    print 'tossing orphan block: %s' % (name,)
+                    self.orphan_blocks ([(name, block)])
+
+    def toss_orphan_blocks (self, orphans):
+        # for now, just dump them into a binary log file
+        f = open ('orphans.bin', 'ab')
+        for name, orphan in orphans:
+            f.write (struct.pack ('<Q', len(block)))
+            f.write (block)
+        f.close()
+
+    def release_embargo (self, name, block):
+        if self.file is None:
+            self.open_for_append()
+        (version, prev_block, merkle_root,
+         timestamp, bits, nonce) = unpack_block_header (block[:80])
+        prev_block = hexify (prev_block, True)
+        if self.has_key (prev_block):
+            size = len (block)
+            pos = self.file.tell()
+            self.file.write (struct.pack ('<Q', size))
+            self.file.write (block)
+            self.file.flush()
+            self.prev[name] = prev_block
+            self.next[prev_block] = name
+            self.blocks[name] = pos
+            print 'wrote block %s' % (name,)
+            i = self.block_num[prev_block]
+            self.block_num[name] = i+1
+            self.num_block[i+1] = name
+            self.last_block = name
+            self.last_block_index = i+1
+            if the_wallet:
+                the_wallet.new_block (unpack_block (block))
+        else:
+            print 'cannot chain block %s' % (name,)
 
     def has_key (self, name):
         return self.prev.has_key (name)
@@ -900,7 +951,9 @@ class connection (asynchat.async_chat):
                 try:
                     method (data)
                 except:
-                    print '     ********** problem processing %d command: packet=%r' % (cmd, data)
+                    (file, fun, line), t, v, tbinfo = asyncore.compact_traceback()
+                    print 'caesure error: %s, %s: file: %s line: %s' % (t, v, file, line)
+                    print '     ********** problem processing %r command: packet=%r' % (cmd, data)
         else:
             print 'bad command: "%r", ignoring' % (cmd,)
 
