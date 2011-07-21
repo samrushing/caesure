@@ -188,7 +188,7 @@ class handler:
             b = db[db.num_block[num]]
             last_num = db.block_num[db.last_block]
             RP ('<br>&nbsp;&nbsp;<a href="/admin/block/0">First Block</a>')
-            RP ('&nbsp;&nbsp;<a href="/admin/block/%d">Last Block</a><br>' % last_num,)
+            RP ('&nbsp;&nbsp;<a href="/admin/block/">Last Block</a><br>')
             RP ('&nbsp;&nbsp;<a href="/admin/block/embargo">Embargo</a>')
             if num > 0:
                 RP ('&nbsp;&nbsp;<a href="/admin/block/%d">Prev Block</a>' % (num-1,))
@@ -310,6 +310,9 @@ class handler:
         path, params, query, fragment = request.split_uri()
         RP = request.push
         w = the_wallet
+        if not w:
+            RP ('<h3>no wallet</h3>')
+            return
         if query:
             qparts = parse_qs (query[1:])
             if self.match_form (qparts, ['amount', 'addr', 'fee']):
