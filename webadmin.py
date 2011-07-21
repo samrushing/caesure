@@ -2,6 +2,7 @@
 
 import re
 import sys
+import time
 import zlib
 
 from urllib import splitquery
@@ -34,6 +35,32 @@ favicon = (
 
 from __main__ import *
 
+# all this CSS magic is stolen from looking at the output from pident.artefact2.com
+css = """
+<style type="text/css">
+body { font-family: monospace; }
+table > tbody > tr:nth-child(odd) {
+	background-color:#f0f0f0;
+}
+table > tbody > tr:nth-child(even) {
+	background-color:#e0e0e0;
+}
+table { width:100%; }
+tr.inrow { border:1px green; }
+tr.plus > td { background-color:#80ff80; }
+tr.minus > td { background-color:#ff8080; }
+</style>
+"""
+
+def shorten (s, w=20):
+    if len(s) > w:
+        return s[:w] + '&hellip;'
+    else:
+        return s
+
+def shorthex (s):
+    return shorten (hexify (s))
+
 class handler:
 
     def __init__ (self):
@@ -64,8 +91,9 @@ class handler:
                 method = getattr (self, method_name)
                 request.push (
                     '\r\n'.join ([
-                            '<html><head></head>'
-                            '<body>'
+                            '<html><head>',
+                            css,
+                            '</head><body>',
                             '<h1>caesure admin</h1>',
                             ])
                     )
@@ -120,19 +148,23 @@ class handler:
         else:
             RP ('total btc: %s' % (bcrepr (w.total_btc),))
 
-    def dump_block (self, request, b):
+    def dump_block (self, request, b, num):
         RP = request.push
         RP ('\r\n'.join ([
-                    '<br>prev_block: %s' % (hexify (b.prev_block),),
+                    '<br>block: %d' % (num,),
+                    '<br>prev_block: %s' % (b.prev_block,),
                     '<br>merkle_root: %s' % (hexify (b.merkle_root),),
-                    '<br>timestamp: %s' % (b.timestamp,),
+                    '<br>timestamp: %s (%s)' % (b.timestamp, time.ctime (b.timestamp)),
                     '<br>bits: %s' % (b.bits,),
                     '<br>nonce: %s' % (b.nonce,),
+                    '<br><a href="http://blockexplorer.com/b/%d">block explorer</a>' % (num,),
                     ]))
-        RP ('<pre>%d transactions\r\n' % len(b.transactions))
-        for tx in b.transactions:
-            self.dump_tx (request, tx)
-        RP ('</pre>')
+        #RP ('<pre>%d transactions\r\n' % len(b.transactions))
+        RP ('<table><thead><tr><th>num</th><th>ID</th><th>inputs</th><th>outputs</th></tr></thead>')
+        for i in range (len (b.transactions)):
+            self.dump_tx (request, b.transactions[i], i)
+        RP ('</table>')
+        #RP ('</pre>')
         
     def cmd_block (self, request, parts):
         db = the_block_db
@@ -142,14 +174,14 @@ class handler:
                 if len(db.embargo):
                     for name, block in db.embargo.iteritems():
                         RP ('<hr>%s' % (name,))
-                        self.dump_block (request, unpack_block (block))
+                        self.dump_block (request, block, db.last_block_index + 1)
                 else:
                     RP ('<h3>no blocks in embargo</h3>')
                 return
             elif len(parts[1]):
                 num = int (parts[1])
             else:
-                num = 0
+                num = db.last_block_index
         else:
             num = 0
         if db.num_block.has_key (num):
@@ -160,25 +192,53 @@ class handler:
             RP ('&nbsp;&nbsp;<a href="/admin/block/embargo">Embargo</a>')
             if num > 0:
                 RP ('&nbsp;&nbsp;<a href="/admin/block/%d">Prev Block</a>' % (num-1,))
+            else:
+                RP ('&nbsp;&nbsp;Prev Block<br>')
             if num < db.block_num[db.last_block]:
                 RP ('&nbsp;&nbsp;<a href="/admin/block/%d">Next Block</a><br>' % (num+1,))
-            self.dump_block (request, b)
+            else:
+                RP ('&nbsp;&nbsp;Next Block<br>')
+            self.dump_block (request, b, num)
 
-    def dump_tx (self, request, tx):
+    def dump_tx (self, request, tx, tx_num):
         RP = request.push
-        RP ('tx: %s\r\n' % (hexify (dhash (tx.render()))))
-        RP ('inputs: %d\r\n' % (len(tx.inputs)))
+        RP ('<tr><td>%s</td><td>%s</td>\r\n' % (tx_num, shorthex (dhash (tx.render()))))
+        RP ('<td><table>')
         for i in range (len (tx.inputs)):
             (outpoint, index), script, sequence = tx.inputs[i]
-            RP ('%3d %s:%d %s %d\r\n' % (i, hexify(outpoint), index, hexify (script), sequence))
-        RP ('%d outputs\n' % (len(tx.outputs)))
+            tr_class = ''
+            if the_wallet and the_wallet.outpoints.has_key ((outpoint, index)):
+                tr_class = ' class="minus"'
+            else:
+                col0, col1 = '', ''
+            RP ('<tr%s><td>%3d</td><td>%s:%d</td><td>%s</td><td>%s</td></tr>' % (
+                    tr_class,
+                    i,
+                    shorthex (outpoint),
+                    index,
+                    shorthex (script),
+                    sequence)
+                )
+        RP ('</table></td><td><table>')
         for i in range (len (tx.outputs)):
             value, pk_script = tx.outputs[i]
-            addr = parse_oscript (pk_script)
-            if not addr:
+            kind, data = parse_oscript (pk_script)
+            col0, col1 = '', ''
+            tr_class = ''
+            if kind == 'address':
+                addr = data
+                if the_wallet and the_wallet.addrs.has_key (addr):
+                    tr_class = ' class="plus"'
+                # too noisy, simplify
+                kind = ''
+            elif kind == 'pubkey':
+                addr = key_to_address (rhash (data))
+            else:
                 addr = hexify (pk_script)
-            RP ('%3d %s %s\n' % (i, bcrepr (value), addr))
-        RP ('lock_time: %s\n' % tx.lock_time)
+            RP ('<tr%s><td>%s</td><td>%s %s</td></tr>' % (tr_class, bcrepr (value), kind, addr))
+        # lock time seems to always be zero
+        #RP ('</table></td><td>%s</td></tr>' % tx.lock_time,)
+        RP ('</table></td></tr>')
 
     def cmd_reload (self, request, parts):
         new_hand = reload (sys.modules['webadmin'])
@@ -263,7 +323,7 @@ class handler:
                 else:
                     tx = w.build_send_request (btc, addr, fee)
                     RP ('<br>send tx:<br><pre>')
-                    self.dump_tx (request, tx)
+                    self.dump_tx (request, tx, 0)
                     self.pending_send.append (tx)
                     RP ('</pre>')
             elif self.match_form (qparts, ['cancel', 'index']):
@@ -295,7 +355,7 @@ class handler:
             for i in range (len (self.pending_send)):
                 RP ('<hr>#%d: <br>' % (i,))
                 RP ('<pre>')
-                self.dump_tx (request, self.pending_send[i])
+                self.dump_tx (request, self.pending_send[i], i)
                 RP ('</pre>')
                 RP ('<form><input type="hidden" name="index" value="%d">'
                     '<input type="submit" name="confirm" value="confirm"/>'
