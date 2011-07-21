@@ -125,6 +125,7 @@ class wallet:
         self.path = path
         self.keys = {}
         self.addrs = {}
+        self.outpoints = {}
         # these will load from the cache
         self.last_block = 0
         self.total_btc = 0
@@ -179,6 +180,10 @@ class wallet:
             self.write_value_cache()
         else:
             print 'wallet cache is caught up with the block chain'
+        # update the outpoint map
+        for addr, outpoints in self.value.iteritems():
+            for outpoint, value in outpoints.iteritems():
+                self.outpoints[outpoint] = value
         print 'total btc in wallet:', bcrepr (self.total_btc)
 
     def write_value_cache (self):
@@ -218,6 +223,7 @@ class wallet:
                     else:
                         value = self.value[addr][outpoint]
                         self.value[addr][outpoint] = 0
+                        self.outpoints[outpoint] = 0
                         self.total_btc -= value
                         dirty = True
                     print 'SEND: %s %s' % (bcrepr (value), addr,)
@@ -227,14 +233,15 @@ class wallet:
         rtotal = 0
         index = 0
         for value, oscript in tx.outputs:
-            addr = parse_oscript (oscript)
-            if addr and self.addrs.has_key (addr):
+            kind, addr = parse_oscript (oscript)
+            if kind == 'address' and self.addrs.has_key (addr):
                 hash = tx.get_hash()
                 outpoint = hash, index
                 if self.value[addr].has_key (outpoint):
                     raise KeyError ("outpoint already present?")
                 else:
                     self.value[addr][outpoint] = value
+                    self.outpoints[outpoint] += value
                     self.total_btc += value
                     dirty = True
                 print 'RECV: %s %s' % (bcrepr (value), addr)
@@ -361,9 +368,14 @@ object_types = {
     2: "BLOCK"
     }
 
+MAX_BLOCK_SIZE = 1000000
+COIN = 100000000
+MAX_MONEY = 21000000 * COIN
+
 # used to keep track of the parsing position when cracking packets
 class position:
     def __init__ (self, val=0):
+        self.origin = val
         self.val = val
     def __int__ (self):
         return self.val
@@ -371,6 +383,8 @@ class position:
         return self.val
     def incr (self, delta):
         self.val += delta
+        if self.val - self.origin > MAX_BLOCK_SIZE:
+            raise ValueError ("data > MAX_BLOCK_SIZE")
     def __repr__ (self):
         return '<pos %d>' % (self.val,)
 
@@ -426,11 +440,14 @@ def pack_version (me_addr, you_addr, nonce):
     data += struct.pack ('<I', start_height)
     return make_packet ('version', data)
 
+NULL_OUTPOINT = ('\x00' * 32, 4294967295)
+
 class TX:
-    def __init__ (self, inputs, outputs, lock_time):
+    def __init__ (self, inputs, outputs, lock_time, raw=None):
         self.inputs = inputs
         self.outputs = outputs
         self.lock_time = lock_time
+        self.raw = raw
 
     def copy (self):
         return copy.deepcopy (self)
@@ -447,10 +464,10 @@ class TX:
         print '%d outputs' % (len(self.outputs))
         for i in range (len (self.outputs)):
             value, pk_script = self.outputs[i]
-            addr = parse_oscript (pk_script)
+            kind, addr = parse_oscript (pk_script)
             if not addr:
                 addr = hexify (pk_script)
-            print '%3d %s %s' % (i, bcrepr (value), addr)
+            print '%3d %s %s %r' % (i, bcrepr (value), kind, addr)
         print 'lock_time:', self.lock_time
 
     def render (self):
@@ -475,6 +492,7 @@ class TX:
         return ''.join (result)
 
     # Hugely Helpful: http://forum.bitcoin.org/index.php?topic=2957.20
+    # NOTE: this currently verifies only 'standard' address transactions.
     def get_ecdsa_hash (self, index):
         tx0 = self.copy()
         iscript = tx0.inputs[index][1]
@@ -503,13 +521,19 @@ class TX:
         return sig
 
     def verify (self, index):
-        hash, sig, pubkey = self.get_ecdsa_hash (index)
-        k = KEY()
-        k.set_pubkey (pubkey)
-        return k.verify (hash, sig)
+        outpoint, script, sequence = self.inputs[index]
+        if outpoint == NULL_OUTPOINT:
+            # generation is considered verified - I assume by virtue of its hash value?
+            return 1
+        else:
+            hash, sig, pubkey = self.get_ecdsa_hash (index)
+            k = KEY()
+            k.set_pubkey (pubkey)
+            return k.verify (hash, sig)
 
 def unpack_tx (data, pos):
     # has its own version number
+    pos0 = pos.val
     version, = unpack_pos ('<I', data, pos)
     if version != 1:
         raise ValueError ("unknown tx version: %d" % (version,))
@@ -531,7 +555,15 @@ def unpack_tx (data, pos):
         pos.incr (pk_script_length)
         outputs.append ((value, pk_script))
     lock_time, = unpack_pos ('<I', data, pos)
-    return TX (inputs, outputs, lock_time)
+    pos1 = pos.val
+    return TX (inputs, outputs, lock_time, data[pos0:pos1])
+
+# both generation and address push two values, so this is good for most things.
+
+# The two numbers pushed by the input script for generation are
+# *usually* a compact representation of the current target, and the
+# 'extraNonce'.  But there doesn't seem to be any requirement for that;
+# the eligius pool uses the string 'Elegius'.
 
 def parse_iscript (s):
     # these tend to be push, push
@@ -554,18 +586,23 @@ def parse_iscript (s):
         return None, None
 
 def make_iscript (sig, pubkey):
+    # XXX assert length limits
     sl = len (sig)
     kl = len (pubkey)
     return chr(sl) + sig + chr(kl) + pubkey
 
 def parse_oscript (s):
     if (ord(s[0]) == 118 and ord(s[1]) == 169 and ord(s[-2]) == 136 and ord(s[-1]) == 172):
+        # standard address output: OP_DUP OP_HASH160 <pubKeyHash> OP_EQUALVERIFY OP_CHECKSIG
         size = ord(s[2])
         addr = key_to_address (s[3:size+3])
         assert (size+5 == len(s))
-        return addr
+        return 'address', addr
+    elif ord(s[0]) == (len(s) - 2) and ord (s[-1]) == 0xac:
+        # generation: <pubkey>, OP_CHECKSIG
+        return 'pubkey', s[1:-1]
     else:
-        return None
+        return 'unknown', s
 
 def make_oscript (addr):
     # standard tx oscript
@@ -662,28 +699,85 @@ def unpack_getdata (data, pos):
     # identical to INV
     return unpack_inv (data, pos)
 
+class BadBlock (Exception):
+    pass
+
 class BLOCK:
-    def __init__ (self, prev_block, merkle_root, timestamp, bits, nonce, transactions):
-        self.prev_block = prev_block
+    def __init__ (self, prev_block, merkle_root, timestamp, bits, nonce, transactions, raw=None):
+        self.version = 1
+        self.prev_block = hexify (prev_block, True)
         self.merkle_root = merkle_root
         self.timestamp = timestamp
         self.bits = bits
         self.nonce = nonce
         self.transactions = transactions
+        self.raw = raw
 
-    def get_hash (self):
-        return hexify (
-            struct.pack (
-                '<I32s32sIII', 
-                self.version, self.prev_block, self.merkle_root,
-                self.timestamp, self.bits, self.nonce
-                ),
-            True
+    def check_bits (self):
+        shift  = self.bits >> 24
+        target = (self.bits & 0xffffff) * (1 << (8 * (shift - 3)))
+        hash = self.get_hash (hex=False)[::-1]
+        val = int (hash.encode ('hex'), 16)
+        return val < target
+
+    def get_merkle_hash (self):
+        hl = [dhash (t.raw) for t in self.transactions]
+        while 1:
+            if len(hl) == 1:
+                return hl[0]
+            if len(hl) % 2 != 0:
+                hl.append (hl[-1])
+            hl0 = []
+            for i in range (0, len (hl), 2):
+                hl0.append (dhash (hl[i] + hl[i+1]))
+            hl = hl0
+
+    # see https://en.bitcoin.it/wiki/Protocol_rules
+    def check_rules (self):
+        if not len(self.transactions):
+            raise BadBlock ("zero transactions")
+        elif not self.check_bits():
+            raise BadBlock ("did not achieve target")
+        elif (time.time() - self.timestamp) < (-60 * 60 * 2):
+            raise BadBlock ("block from the future")
+        else:
+            for i in range (len (self.transactions)):
+                tx = self.transactions[i]
+                if i == 0 and (len (tx.inputs) != 1 or tx.inputs[0][0] != NULL_OUTPOINT):
+                    raise BadBlock ("first transaction not a generation")
+                elif i == 0 and not (2 <= len (tx.inputs[0][1]) <= 100):
+                    raise BadBlock ("bad sig_script in generation transaction")
+                elif i > 0:
+                    for outpoint, sig_script, sequence in tx.inputs:
+                        if outpoint == NULL_OUTPOINT:
+                            raise BadBlock ("transaction other than the first is a generation")
+                for value, _ in tx.outputs:
+                    if value > MAX_MONEY:
+                        raise BadBlock ("too much money")
+                    # XXX not checking SIGOP counts since we don't really implement the script engine.
+            # check merkle hash
+            if self.merkle_root != self.get_merkle_hash():
+                raise BadBlock ("merkle hash doesn't match")
+        # XXX more to come...
+
+    def get_hash (self, hex=True):
+        # reconstruct the 80-byte header
+        header = struct.pack (
+            '<I32s32sIII', 
+            self.version, unhexify (self.prev_block, True),
+            self.merkle_root, self.timestamp, self.bits, self.nonce
             )
+        # dhash it
+        hash = dhash (header)
+        if hex:
+            return hexify (hash)
+        else:
+            return hash
 
 def unpack_block (data, pos=None):
     if pos is None:
         pos = position()
+    pos0 = pos.val
     version, prev_block, merkle_root, timestamp, bits, nonce = unpack_pos ('<I32s32sIII', data, pos)
     if version != 1:
         raise ValueError ("unsupported block version: %d" % (version,))
@@ -691,7 +785,8 @@ def unpack_block (data, pos=None):
     transactions = []
     for i in range (count):
         transactions.append (unpack_tx (data, pos))
-    return BLOCK (prev_block, merkle_root, timestamp, bits, nonce, transactions)
+    pos1 = pos.val
+    return BLOCK (prev_block, merkle_root, timestamp, bits, nonce, transactions, raw=data[pos0:pos1])
 
 def unpack_block_header (data):
     # version, prev_block, merkle_root, timestamp, bits, nonce
@@ -774,16 +869,15 @@ class block_db:
     def __getitem__ (self, name):
         return unpack_block (self.get_block (name))
 
+    def by_num (self, num):
+        return self[self.num_block[num]]
+
     def add (self, name, block):
-        header = block[:80]
-        (version, prev_block, merkle_root,
-         timestamp, bits, nonce) = unpack_block_header (header)
-        prev_block = hexify (prev_block, True)
         if self.blocks.has_key (name):
             print 'ignoring block we already have:', name
         else:
             for name0, block0 in self.embargo.iteritems():
-                if name0 == prev_block:
+                if name0 == block.prev_block:
                     # case 0: it links to an embargo block (normal case)
                     #    * release that embargo block
                     #    * toss any other embargo blocks
@@ -797,7 +891,7 @@ class block_db:
                     self.embargo = { name:block }
                     break
             else:
-                if prev_block == self.last_block:
+                if block.prev_block == self.last_block:
                     # case 1: it links to the last block (racing blocks / competing subnet)
                     #    * add to the embargo list
                     self.embargo[name] = block
@@ -805,39 +899,36 @@ class block_db:
                     # case 2: it links to neither (problem or lame hack attempt?)
                     #    * toss it
                     print 'tossing orphan block: %s' % (name,)
-                    self.orphan_blocks ([(name, block)])
+                    self.toss_orphan_blocks ([(name, block)])
 
     def toss_orphan_blocks (self, orphans):
         # for now, just dump them into a binary log file
         f = open ('orphans.bin', 'ab')
-        for name, orphan in orphans:
-            f.write (struct.pack ('<Q', len(block)))
-            f.write (block)
+        for name, block in orphans:
+            f.write (struct.pack ('<Q', len(block.raw)))
+            f.write (block.raw)
         f.close()
 
     def release_embargo (self, name, block):
         if self.file is None:
             self.open_for_append()
-        (version, prev_block, merkle_root,
-         timestamp, bits, nonce) = unpack_block_header (block[:80])
-        prev_block = hexify (prev_block, True)
-        if self.has_key (prev_block):
-            size = len (block)
+        if self.has_key (block.prev_block):
+            size = len (block.raw)
             pos = self.file.tell()
             self.file.write (struct.pack ('<Q', size))
-            self.file.write (block)
+            self.file.write (block.raw)
             self.file.flush()
-            self.prev[name] = prev_block
-            self.next[prev_block] = name
+            self.prev[name] = block.prev_block
+            self.next[block.prev_block] = name
             self.blocks[name] = pos
             print 'wrote block %s' % (name,)
-            i = self.block_num[prev_block]
+            i = self.block_num[block.prev_block]
             self.block_num[name] = i+1
             self.num_block[i+1] = name
             self.last_block = name
             self.last_block_index = i+1
             if the_wallet:
-                the_wallet.new_block (unpack_block (block))
+                the_wallet.new_block (block)
         else:
             print 'cannot chain block %s' % (name,)
 
@@ -1038,7 +1129,13 @@ class connection (asynchat.async_chat):
         # were we waiting for this block?
         if self.pending.has_key (name):
             del self.pending[name]
-        the_block_db.add (name, data)
+        b = unpack_block (data)
+        try:
+            b.check_rules()
+        except BadBlock as reason:
+            print "*** bad block: %s %r" % (name, reason,)
+        else:
+            the_block_db.add (name, b)
         self.kick_seeking()
 
 def valid_ip (s):
