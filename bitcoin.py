@@ -1166,6 +1166,18 @@ if __name__ == '__main__':
         the_wallet = wallet (sys.argv[i+1])
         del sys.argv[i:i+2]
 
+    if '-m' in sys.argv:
+        sys.argv.remove ('-m')
+        do_monitor = True
+    else:
+        do_monitor = False
+
+    if '-a' in sys.argv:
+        sys.argv.remove ('-a')
+        do_admin = True
+    else:
+        do_admin = False
+
     # client mode
     if '-c' in sys.argv:
         i = sys.argv.index ('-c')
@@ -1177,10 +1189,12 @@ if __name__ == '__main__':
             import monitor
             # for now, there's a single global connection.  later we'll have a bunch.
             bc = connection (other_addr)
-            m = monitor.monitor_server()
-            h = asynhttp.http_server ('127.0.0.1', 8380)
-            import webadmin
-            h.install_handler (webadmin.handler())
+            if do_monitor:
+                m = monitor.monitor_server()
+            if do_admin:
+                h = asynhttp.http_server ('127.0.0.1', 8380)
+                import webadmin
+                h.install_handler (webadmin.handler())
             asyncore.loop()
     else:
         # database browsing mode
