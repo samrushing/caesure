@@ -135,13 +135,15 @@ class handler:
             for name in db.embargo.keys():
                 RP ('<br>%s' % name)
             RP ('<hr>')
-        RP ('<h3>connection</h3>')
-        RP (escape (repr (bc)))
-        try:
-            RP ('<br>here: %s' % (bc.getsockname(),))
-            RP ('<br>there: %s' % (bc.getpeername(),))
-        except:
-            RP ('<br>no connection</br>')
+        RP ('<h3>connections</h3>')
+        RP ('<table><thead><tr><th>packets</th><th>address</th><tr></thead>')
+        for conn in the_connection_list:
+            try:
+                addr, port = conn.getpeername()
+                RP ('<tr><td>%d</td><td>%s:%d</td></tr>' % (conn.packet_count, addr, port))
+            except:
+                RP ('<br>dead connection</br>')
+        RP ('</table><hr>')
         RP ('<h3>wallet</h3>')
         if w is None:
             RP ('No Wallet')
@@ -179,11 +181,14 @@ class handler:
                     RP ('<h3>no blocks in embargo</h3>')
                 return
             elif len(parts[1]):
-                num = int (parts[1])
+                try:
+                    num = int (parts[1])
+                except ValueError:
+                    num = db.last_block_index
             else:
                 num = db.last_block_index
         else:
-            num = 0
+            num = db.last_block_index
         if db.num_block.has_key (num):
             b = db[db.num_block[num]]
             last_num = db.block_num[db.last_block]
