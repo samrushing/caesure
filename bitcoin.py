@@ -7,8 +7,7 @@
 #
 # Status: much of the protocol is done.  The crypto bits are now
 #   working, and I can verify 'standard' address-to-address transactions.
-#   There's a simple wallet implementation, which will hopefully soon
-#   be able to transact actual bitcoins.
+#   There's a simple wallet implementation, which can now transact BTC.
 # Todo: consider implementing the scripting engine.
 # Todo: actually participate in the p2p network rather than being a lurker.
 #
@@ -571,14 +570,12 @@ def parse_iscript (s):
     if s0 > 0 and s0 < 76:
         # specifies the size of the first key
         k0 = s[1:1+s0]
-        #print 'k0:', hexify (k0)
         if len(s) == 1+s0:
             return k0, None
         else:
             s1 = ord (s[1+s0])
             if s1 > 0 and s1 < 76:
                 k1 = s[2+s0:2+s0+s1]
-                #print 'k1:', hexify (k1)
                 return k0, k1
             else:
                 return None, None
@@ -969,6 +966,7 @@ class connection (asynchat.async_chat):
         self.seeking = []
         self.pending = {}
         self.state_header()
+        self.packet_count = 0
         self.connect ((addr, BITCOIN_PORT))
         if not the_block_db.prev:
             # totally empty block database, seek the genesis block
@@ -976,6 +974,14 @@ class connection (asynchat.async_chat):
 
     def collect_incoming_data (self, data):
         self.ibuffer.append (data)
+
+    def handle_error (self):
+        print 'error on %r' % (self,)
+        try:
+            the_connection_list.remove (self)
+        except ValueError:
+            pass
+        self.close()
 
     def handle_connect (self):
         self.push (
@@ -985,6 +991,13 @@ class connection (asynchat.async_chat):
                 self.nonce
                 )
             )
+        the_connection_list.append (self)
+
+    def handle_close (self):
+        try:
+            the_connection_list.remove (self)
+        except:
+            pass
 
     def state_header (self):
         self.state = HEADER
@@ -1012,6 +1025,7 @@ class connection (asynchat.async_chat):
             magic, command, length = struct.unpack ('<I12sI', data)
             command = command.strip ('\x00')
             print 'cmd:', command
+            self.packet_count += 1
             self.header = magic, command, length
             if command not in ('version', 'verack'):
                 self.state_checksum()
@@ -1112,6 +1126,7 @@ class connection (asynchat.async_chat):
         for objid, hash in pairs:
             if objid == OBJ_BLOCK:
                 name = hexify (hash, True)
+                # XXX check the embargo first!!!
                 if not the_block_db.has_key (name):
                     self.seeking.append (name)
         self.kick_seeking()
@@ -1127,6 +1142,7 @@ class connection (asynchat.async_chat):
         #  lives in the first 80 bytes.
         name = hexify (dhash (data[:80]), True)
         # were we waiting for this block?
+        # XXX check the embargo as well
         if self.pending.has_key (name):
             del self.pending[name]
         b = unpack_block (data)
@@ -1138,21 +1154,51 @@ class connection (asynchat.async_chat):
             the_block_db.add (name, b)
         self.kick_seeking()
 
-def valid_ip (s):
-    parts = s.split ('.')
-    nums = map (int, parts)
-    assert (len (nums) == 4)
-    for num in nums:
-        if num > 255:
-            raise ValueError
+    def cmd_ping (self, data):
+        # do nothing
+        pass
 
+    def cmd_alert (self, data):
+        pos = position()
+        payload   = unpack_var_str (data, pos)
+        signature = unpack_var_str (data, pos)
+        # XXX verify signature
+        print 'alert: %r' % (payload,)
 
 the_wallet = None
 the_block_db = None
+the_connection_list = []
+
+dns_seeds = [
+    "bitseed.xf2.org",
+    "bitseed.bitcoin.org.uk",
+    "dnsseed.bluematt.me",
+    ]
+
+def valid_ip (s):
+    try:
+        parts = s.split ('.')
+        nums = map (int, parts)
+        assert (len (nums) == 4)
+        for num in nums:
+            if num > 255:
+                raise ValueError
+    except:
+        raise ValueError ("not a valid IP: %r" % (s,))
+
+def dns_seed():
+    print 'fetching DNS seed addresses...'
+    addrs = set()
+    for name in dns_seeds:
+        for info in socket.getaddrinfo (name, 8333):
+            family, type, proto, _, addr = info
+            if family == socket.AF_INET and type == socket.SOCK_STREAM and proto == socket.IPPROTO_TCP:
+                addrs.add (addr[0])
+    print '...done.'
+    return addrs
 
 if __name__ == '__main__':
     if '-t' in sys.argv:
-        sys.argv.remove ('-t')
         BITCOIN_PORT = 18333
         BITCOIN_MAGIC = '\xfa\xbf\xb5\xda'
         BLOCKS_PATH = 'blocks.testnet.bin'
@@ -1160,42 +1206,40 @@ if __name__ == '__main__':
 
     # mount the block database
     the_block_db = block_db()
+    network = False
 
     if '-w' in sys.argv:
         i = sys.argv.index ('-w')
         the_wallet = wallet (sys.argv[i+1])
-        del sys.argv[i:i+2]
-
-    if '-m' in sys.argv:
-        sys.argv.remove ('-m')
-        do_monitor = True
-    else:
-        do_monitor = False
-
-    if '-a' in sys.argv:
-        sys.argv.remove ('-a')
-        do_admin = True
-    else:
-        do_admin = False
 
     # client mode
     if '-c' in sys.argv:
         i = sys.argv.index ('-c')
-        if len(sys.argv) < 3:
-            print 'usage: %s -c <externally-visible-ip-address> <server-ip-address>' % (sys.argv[0],)
-        else:
-            [my_addr, other_addr] = sys.argv[i+1:i+3]
-            valid_ip (my_addr)
+        [my_addr, other_addr] = sys.argv[i+1:i+3]
+        bc = connection (other_addr)
+        network = True
+
+    # network mode
+    if '-n' in sys.argv:
+        i = sys.argv.index ('-n')
+        my_addr = sys.argv[i+1]
+        addrs = dns_seed()
+        for addr in addrs:
+            connection (addr)
+        network = True
+
+    do_monitor = '-m' in sys.argv
+    do_admin   = '-a' in sys.argv
+
+    if network:
+        if do_monitor:
             import monitor
-            # for now, there's a single global connection.  later we'll have a bunch.
-            bc = connection (other_addr)
-            if do_monitor:
-                m = monitor.monitor_server()
-            if do_admin:
-                h = asynhttp.http_server ('127.0.0.1', 8380)
-                import webadmin
-                h.install_handler (webadmin.handler())
-            asyncore.loop()
+            m = monitor.monitor_server()
+        if do_admin:
+            h = asynhttp.http_server ('127.0.0.1', 8380)
+            import webadmin
+            h.install_handler (webadmin.handler())
+        asyncore.loop()
     else:
         # database browsing mode
         db = the_block_db # alias
