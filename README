@@ -13,21 +13,43 @@ either: A) an openssl library.
 
 I have tested this code using openssl on osx 10.6 (64-bit), linux ubuntu (32-bit), and freebsd-7 (64-bit).
 
-status:
-
-It can connect to a server - preferably on the same host - and download the latest blocks.  stores
-the block chain in a simple flat file.  The wallet can store private keys, and can monitor the block
-chain for transactions related to those keys.  You can also scan the entire block database (or a
-portion of it) for related transactions.
-
-todo:
-
-There's still a lot of work to be done before I would consider it safe to connect
-this to the wider bitcoin p2p network.  In the meanwhile, 
-
 name:
 
 It's a pun on the words Caesar and Seizure.  "Render unto Caesar..."
+
+status:
+
+================================================================================
+This code is fairly close to being able to be a full participant on the network.
+
+A couple of issues remain:
+  1) orphan blocks are not always correctly handled.  I think the
+     'embargo' concept may not work, and that it may be necessary to
+     fully implement the idea of multiple alternative block chains.
+     This has implications for the wallet: if there are multiple live
+     chains, there are multiple possible wallet states.
+  2) most of the 'protocol/network rules' are implemented, but not all of them.
+
+I should say here that finishing this code could help the bitcoin
+network tremendously, since its event-driven design makes it very
+scalable.  This code should be able to connect simultaneously to many
+hundreds of other nodes.  [The current bitcoin network is very
+constrained, mostly because there is only one real implementation, and
+it's a desktop client - this is a serious hindrance to bringing nodes
+out from behind firewalls.  Servers should not have wallets, and they
+should not be behind NATs and firewalls]
+
+Another feature that would be really nice: to generalize the
+block-chain-download process so that it can pull the block chain from
+many nodes at once.  This would radically speed up the initialization
+process for new nodes.
+
+That said, as of Sep 2011, I have other priorities at the moment.
+Perhaps if someone were to drop a little BTC into the donation bucket
+I might be more interested in working on it.  As it stands not a
+single donation has been made. (hint, hint).
+
+================================================================================
 
 usage:
 --------------------------------------------------------------------------------
