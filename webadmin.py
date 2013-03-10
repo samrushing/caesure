@@ -4,6 +4,7 @@ import re
 import sys
 import time
 import zlib
+import coro
 
 from urllib import splitquery
 from urlparse import parse_qs
@@ -67,50 +68,42 @@ class handler:
         self.pending_send = []
 
     def match (self, request):
-        path, params, query, fragment = request.split_uri()
-        if path == '/favicon.ico':
-            return True
-        else:
-            return path.startswith ('/admin/')
+        return request.path.startswith ('/admin/')
 
     safe_cmd = re.compile ('[a-z]+')
 
     def handle_request (self, request):
-        path, params, query, fragment = request.split_uri()
-        if path == '/favicon.ico':
-            request['Content-Type'] = 'image/x-icon'
-            request.push (favicon)
+        parts = request.path.split ('/')[2:] # ignore ['', 'admin']
+        subcmd = parts[0]
+        if not subcmd:
+            subcmd = 'status'
+        method_name = 'cmd_%s' % (subcmd,)
+        if self.safe_cmd.match (subcmd) and hasattr (self, method_name):
+            request['content-type'] = 'text/html'
+            request.set_deflate()
+            method = getattr (self, method_name)
+            request.push (
+                '\r\n'.join ([
+                        '<html><head>',
+                        css,
+                        '</head><body>',
+                        '<h1>caesure admin</h1>',
+                        ])
+                )
+            self.menu (request)
+            try:
+                method (request, parts)
+            except SystemExit:
+                raise
+            except:
+                request.push ('<h1>something went wrong</h1>')
+                request.push ('<pre>%r</pre>' % (coro.compact_traceback(),))
+            request.push ('<hr>')
+            self.menu (request)
+            request.push ('</body></html>')
             request.done()
         else:
-            parts = path.split ('/')[2:] # ignore ['', 'admin']
-            subcmd = parts[0]
-            if not subcmd:
-                subcmd = 'status'
-            method_name = 'cmd_%s' % (subcmd,)
-            if self.safe_cmd.match (subcmd) and hasattr (self, method_name):
-                method = getattr (self, method_name)
-                request.push (
-                    '\r\n'.join ([
-                            '<html><head>',
-                            css,
-                            '</head><body>',
-                            '<h1>caesure admin</h1>',
-                            ])
-                    )
-                self.menu (request)
-                try:
-                    method (request, parts)
-                except SystemExit:
-                    raise
-                except:
-                    request.push ('<h1>something went wrong</h1>')
-                    request.push ('<pre>%r</pre>' % (asyncore.compact_traceback(),))
-                request.push ('<hr>')
-                self.menu (request)
-                request.push ('</body></html>')
-                request.done()
-            else:
-                request.error (400)
+            request.error (400)
 
     def menu (self, request):
         request.push (
@@ -128,13 +121,8 @@ class handler:
         w = the_wallet
         RP = request.push
         RP ('<h3>last block</h3>')
-        RP ('hash: %s' % (db.last_block,))
-        RP ('<br>num: %d' % (db.block_num[db.last_block],))
-        if len (db.embargo):
-            RP ('<hr>%d blocks in embargo:' % (len(db.embargo),))
-            for name in db.embargo.keys():
-                RP ('<br>%s' % name)
-            RP ('<hr>')
+        RP ('hash[es]: %s' % (escape (repr (db.num_block[db.last_block]))))
+        RP ('<br>num: %d' % (db.last_block,))
         RP ('<h3>connections</h3>')
         RP ('<table><thead><tr><th>packets</th><th>address</th><tr></thead>')
         for conn in the_connection_list:
@@ -150,10 +138,11 @@ class handler:
         else:
             RP ('total btc: %s' % (bcrepr (w.total_btc),))
 
-    def dump_block (self, request, b, num):
+    def dump_block (self, request, b, num, name):
         RP = request.push
         RP ('\r\n'.join ([
                     '<br>block: %d' % (num,),
+                    '<br>name: %s' % (name,),
                     '<br>prev_block: %s' % (b.prev_block,),
                     '<br>merkle_root: %s' % (hexify (b.merkle_root),),
                     '<br>timestamp: %s (%s)' % (b.timestamp, time.ctime (b.timestamp)),
@@ -171,43 +160,31 @@ class handler:
     def cmd_block (self, request, parts):
         db = the_block_db
         RP = request.push
-        if len(parts) == 2:
-            if parts[1] == 'embargo':
-                if len(db.embargo):
-                    for name, block in db.embargo.iteritems():
-                        RP ('<hr>%s' % (name,))
-                        self.dump_block (request, block, db.last_block_index + 1)
-                else:
-                    RP ('<h3>no blocks in embargo</h3>')
-                return
-            elif len(parts[1]):
-                try:
-                    num = int (parts[1])
-                except ValueError:
-                    num = db.last_block_index
-            else:
-                num = db.last_block_index
+        if len(parts) == 2 and len (parts[1]):
+            name = parts[1]
         else:
-            num = db.last_block_index
-        if db.num_block.has_key (num):
-            b = db[db.num_block[num]]
-            last_num = db.block_num[db.last_block]
-            RP ('<br>&nbsp;&nbsp;<a href="/admin/block/0">First Block</a>')
+            name = list(db.num_block[db.last_block])[0]
+        if db.has_key (name):
+            b = db[name]
+            num = db.block_num[name]
+            RP ('<br>&nbsp;&nbsp;<a href="/admin/block/%s">First Block</a>' % (genesis_block_hash,))
             RP ('&nbsp;&nbsp;<a href="/admin/block/">Last Block</a><br>')
-            RP ('&nbsp;&nbsp;<a href="/admin/block/embargo">Embargo</a>')
-            if num > 0:
-                RP ('&nbsp;&nbsp;<a href="/admin/block/%d">Prev Block</a>' % (num-1,))
+            if name != genesis_block_hash:
+                RP ('&nbsp;&nbsp;<a href="/admin/block/%s">Prev Block</a>' % (db.prev[name],))
             else:
                 RP ('&nbsp;&nbsp;Prev Block<br>')
-            if num < db.block_num[db.last_block]:
-                RP ('&nbsp;&nbsp;<a href="/admin/block/%d">Next Block</a><br>' % (num+1,))
+            if db.next.has_key (name):
+                names = list (db.next[name])
+                for i in range (len (names)):
+                    RP ('&nbsp;&nbsp;<a href="/admin/block/%s">Next Block %d</a><br>' % (names[i], i))
             else:
                 RP ('&nbsp;&nbsp;Next Block<br>')
-            self.dump_block (request, b, num)
+            self.dump_block (request, b, num, name)
 
     def dump_tx (self, request, tx, tx_num):
         RP = request.push
-        RP ('<tr><td>%s</td><td>%s</td>\r\n' % (tx_num, shorthex (dhash (tx.render()))))
+        #RP ('<tr><td>%s</td><td>%s</td>\r\n' % (tx_num, shorthex (dhash (tx.render()))))
+        RP ('<tr><td>%s</td><td>%s</td>\r\n' % (tx_num, shorthex (dhash (tx.raw))))
         RP ('<td><table>')
         for i in range (len (tx.inputs)):
             (outpoint, index), script, sequence = tx.inputs[i]
@@ -298,9 +275,8 @@ class handler:
         return True
 
     def cmd_connect (self, request, parts):
-        path, params, query, fragment = request.split_uri()
         RP = request.push
-        if query:
+        if request.query:
             qparts = parse_qs (query[1:])
             if self.match_form (qparts, ['host']):
                 global bc
@@ -312,14 +288,13 @@ class handler:
             '<input type="submit" value="Connect"/></form>')
 
     def cmd_send (self, request, parts):
-        path, params, query, fragment = request.split_uri()
         RP = request.push
         w = the_wallet
         if not w:
             RP ('<h3>no wallet</h3>')
             return
-        if query:
-            qparts = parse_qs (query[1:])
+        if request.query:
+            qparts = parse_qs (request.query[1:])
             if self.match_form (qparts, ['amount', 'addr', 'fee']):
                 btc = float_to_btc (float (qparts['amount'][0]))
                 fee = float_to_btc (float (qparts['fee'][0]))
@@ -329,6 +304,7 @@ class handler:
                 except:
                     RP ('<br><h3>Bad Address: %r</h3>' % escape (addr),)
                 else:
+                    sys.stderr.write ("sending %r btc (fee=%r)\n" % (btc, fee))
                     tx = w.build_send_request (btc, addr, fee)
                     RP ('<br>send tx:<br><pre>')
                     self.dump_tx (request, tx, 0)
@@ -343,8 +319,10 @@ class handler:
                 tx = self.pending_send[index]
                 RP ('<h3>sent tx #%d</h3>' % (index,))
                 # send it
-                bc.push (make_packet ('tx', tx.render()))
+                bc.send (make_packet ('tx', tx.render()))
                 # forget about it
+                # XXX actually, this should be stuffed away somewhere until we see a confirmation,
+                #    and only then forgotten about.
                 del self.pending_send[index]
             else:
                 RP ('???')
@@ -372,7 +350,8 @@ class handler:
 
     def cmd_shutdown (self, request, parts):
         request.push ('<h3>Shutting down...</h3>')
+        request.done()
         if the_wallet:
             the_wallet.write_value_cache()
-        import os
-        os._exit (os.EX_OK)
+        coro.sleep_relative (1)
+        coro.set_exit()
