@@ -3,7 +3,7 @@
 # A prototype bitcoin implementation.
 #
 # Author: Sam Rushing. http://www.nightmare.com/~rushing/
-# July 2011.
+# July 2011 - Mar 2013
 #
 # Status: much of the protocol is done.  The crypto bits are now
 #   working, and I can verify 'standard' address-to-address transactions.
@@ -11,10 +11,14 @@
 # Todo: consider implementing the scripting engine.
 # Todo: actually participate in the p2p network rather than being a lurker.
 #
-# One of my goals here is to keep the implementation as simple and small
-#   as possible - with as few outside dependencies as I can get away with.
-#   For that reason I'm using ctypes to get to openssl rather than building
-#   in a dependency on M2Crypto or any of the other crypto packages.
+
+# blocks come in, they may or may not make it into the chain.  you can think
+#   of them as having a 'provisional' block number.  i.e., if you can chain
+#   them in somewhere, they have a block number. But it may not be the eventual
+#   official block #n, because they may lose the race.
+#
+# thus num->block is 1->N and block->num is 1->1
+#
 
 import copy
 import hashlib
@@ -27,12 +31,15 @@ import pickle
 import string
 import sys
 
-import asyncore
-import asynchat
-import asynhttp
+import coro
+import coro.read_stream
 
 from hashlib import sha256
 from pprint import pprint as pp
+
+import caesure.proto
+
+W = coro.write_stderr
 
 # these are overriden for testnet
 BITCOIN_PORT = 8333
@@ -72,9 +79,6 @@ def bcrepr (n):
 def float_to_btc (f):
     return long (round (f * 1e8))
 
-#'1Ncui8YjT7JJD91tkf42dijPnqywbupf7w'
-#'\xed%3\x12/\xfd\x7f\x07$\xc4$Y\x92\x06\xcc\xb2>\x89\xd6\xf7'
-
 class BadAddress (Exception):
     pass
 
@@ -92,6 +96,13 @@ def address_to_key (s):
     if check0 != check1:
         raise BadAddress (s)
     return hash160
+
+def pkey_to_address (s):
+    s = '\x80' + s
+    checksum = dhash (s)[:4]
+    return base58_encode (
+        int ((s + checksum).encode ('hex'), 16)
+        )
 
 # for some reason many hashes are reversed, dunno why.  [this may just be block explorer?]
 def hexify (s, flip=False):
@@ -112,6 +123,12 @@ def frob_hash (s):
         r.append (s[i:i+2])
     r.reverse()
     return ''.join (r)
+
+class timer:
+    def __init__ (self):
+        self.start = time.time()
+    def end (self):
+        return time.time() - self.start
 
 # wallet file format: (<8 bytes of size> <private-key>)+
 class wallet:
@@ -162,7 +179,7 @@ class wallet:
         else:
             self.last_block, self.total_btc, self.value = pickle.load (file)
             file.close()
-        db_last = db.block_num[db.last_block]
+        db_last = db.last_block
         if not len(self.keys):
             print 'no keys in wallet'
             self.last_block = db_last
@@ -188,7 +205,7 @@ class wallet:
     def write_value_cache (self):
         cache_path = self.path + '.cache'
         file = open (cache_path, 'wb')
-        self.last_block = the_block_db.last_block_index
+        self.last_block = the_block_db.last_block
         pickle.dump ((self.last_block, self.total_btc, self.value), file)
         file.close()
 
@@ -213,6 +230,9 @@ class wallet:
         dirty = False
         # did we send money somewhere?
         for outpoint, iscript, sequence in tx.inputs:
+            if outpoint == NULL_OUTPOINT:
+                # we don't generate coins
+                continue
             sig, pubkey = parse_iscript (iscript)
             if sig and pubkey:
                 addr = key_to_address (rhash (pubkey))
@@ -264,16 +284,25 @@ class wallet:
         print 'total: %s' % (bcrepr(sum),)
 
     def scan_block_chain (self, start):
-        # scan the whole chain for an TX related to this wallet
+        # scan the whole chain for any TX related to this wallet
         db = the_block_db
         blocks = db.num_block.keys()
         blocks.sort()
         total = 0
         for num in blocks:
             if num >= start:
-                b = db[db.num_block[num]]
-                for tx in b.transactions:
-                    total += self.check_tx (tx)
+                names = db.num_block[num]
+                for name in names:
+                    b = db[name]
+                    for tx in b.transactions:
+                        try:
+                            n = self.check_tx (tx)
+                            if len(names) > 1:
+                                print 'warning: competing blocks involved in transaction!'
+                            total += n
+                        except:
+                            print '*** bad tx'
+                            tx.dump()
         print 'found %d txs' % (total,)
 
     def new_block (self, block):
@@ -314,7 +343,7 @@ class wallet:
                     break
             # assemble the outputs
             outputs = [(value, dest_addr)]
-            if sum > value:
+            if sum > total:
                 # we need a place to dump the change
                 change_addr = self.get_change_addr()
                 outputs.append ((sum - total, change_addr))
@@ -416,7 +445,8 @@ def unpack_var_str (d, pos):
 def unpack_net_addr (data, pos):
     services, addr, port = unpack_pos ('<Q16s2s', data, pos)
     addr = read_ip_addr (addr)
-    port, = struct.unpack ('!H', port) # pos adjusted above
+    # done separately because it's in network byte order
+    port, = struct.unpack ('>H', port) # pos adjusted above
     return services, (addr, port)
 
 def pack_net_addr ((services, (addr, port))):
@@ -427,26 +457,15 @@ def pack_net_addr ((services, (addr, port))):
 def make_nonce():
     return random.randint (0, 1<<64L)
 
-def pack_version (me_addr, you_addr, nonce):
-    data = struct.pack ('<IQQ', 31900, 1, int(time.time()))
-    data += pack_net_addr ((1, you_addr))
-    data += pack_net_addr ((1, me_addr))
-    data += struct.pack ('<Q', nonce)
-    data += pack_var_str ('')
-    start_height = the_block_db.last_block_index
-    if start_height < 0:
-        start_height = 0
-    data += struct.pack ('<I', start_height)
-    return make_packet ('version', data)
-
 NULL_OUTPOINT = ('\x00' * 32, 4294967295)
 
-class TX:
-    def __init__ (self, inputs, outputs, lock_time, raw=None):
-        self.inputs = inputs
-        self.outputs = outputs
-        self.lock_time = lock_time
-        self.raw = raw
+class TX (caesure.proto.TX):
+
+    ## def __init__ (self, inputs, outputs, lock_time, raw=None):
+    ##     self.inputs = inputs
+    ##     self.outputs = outputs
+    ##     self.lock_time = lock_time
+    ##     self.raw = raw
 
     def copy (self):
         return copy.deepcopy (self)
@@ -534,8 +553,12 @@ def unpack_tx (data, pos):
     # has its own version number
     pos0 = pos.val
     version, = unpack_pos ('<I', data, pos)
-    if version != 1:
-        raise ValueError ("unknown tx version: %d" % (version,))
+    # mar 2013: I can find NO DOCUMENTATION on the upgrade to version 2 TX packets,
+    #   i've scanned through all the damned BIPS one by one.  Boy it'd be nice if the
+    #   protocol docs were kept up to date?  BIP34 mentions version 2 *blocks*, but not
+    #   transactions...
+    #if version != 1:
+    #    raise ValueError ("unknown tx version: %d" % (version,))
     txin_count = unpack_var_int (data, pos)
     inputs = []
     outputs = []
@@ -631,31 +654,24 @@ def pack_var_str (s):
     return pack_var_int (len (s)) + s
 
 def make_packet (command, payload):
-    assert (len(command) < 12)
     lc = len(command)
+    assert (lc < 12)
     cmd = command + ('\x00' * (12 - lc))
-    if command == 'version':
-        return struct.pack (
-            '<4s12sI',
-            BITCOIN_MAGIC,
-            cmd,
-            len(payload),
-            ) + payload
-    else:
-        h = dhash (payload)
-        checksum = struct.unpack ('<I', h[:4])[0]
-        return struct.pack (
-            '<4s12sII',
-            BITCOIN_MAGIC,
-            cmd,
-            len(payload),
-            checksum
-            ) + payload
+    h = dhash (payload)
+    checksum, = struct.unpack ('<I', h[:4])
+    return struct.pack (
+        '<4s12sII',
+        BITCOIN_MAGIC,
+        cmd,
+        len(payload),
+        checksum
+        ) + payload
 
 class proto_version:
     pass
 
 def unpack_version (data):
+    W ('unpack_version %r\n' % (data,))
     pos = position()
     v = proto_version()
     v.version, v.services, v.timestamp = unpack_pos ('<IQQ', data, pos)
@@ -699,16 +715,20 @@ def unpack_getdata (data, pos):
 class BadBlock (Exception):
     pass
 
-class BLOCK:
-    def __init__ (self, prev_block, merkle_root, timestamp, bits, nonce, transactions, raw=None):
-        self.version = 1
-        self.prev_block = hexify (prev_block, True)
-        self.merkle_root = merkle_root
-        self.timestamp = timestamp
-        self.bits = bits
-        self.nonce = nonce
-        self.transactions = transactions
-        self.raw = raw
+class BLOCK (caesure.proto.BLOCK):
+
+    ## def __init__ (self, version, prev_block, merkle_root, timestamp, bits, nonce, transactions, raw=None):
+    ##     self.version = version
+    ##     self.prev_block = hexify (prev_block, True)
+    ##     self.merkle_root = merkle_root
+    ##     self.timestamp = timestamp
+    ##     self.bits = bits
+    ##     self.nonce = nonce
+    ##     self.transactions = transactions
+    ##     self.raw = raw
+
+    def make_TX (self):
+        return TX()
 
     def check_bits (self):
         shift  = self.bits >> 24
@@ -758,12 +778,7 @@ class BLOCK:
         # XXX more to come...
 
     def get_hash (self, hex=True):
-        # reconstruct the 80-byte header
-        header = struct.pack (
-            '<I32s32sIII', 
-            self.version, unhexify (self.prev_block, True),
-            self.merkle_root, self.timestamp, self.bits, self.nonce
-            )
+        header = self.raw[:80]
         # dhash it
         hash = dhash (header)
         if hex:
@@ -776,21 +791,27 @@ def unpack_block (data, pos=None):
         pos = position()
     pos0 = pos.val
     version, prev_block, merkle_root, timestamp, bits, nonce = unpack_pos ('<I32s32sIII', data, pos)
-    if version != 1:
+    # version 2 blocks appear to be from BIP 0034 and affect coinbase... do we need to do anything?
+    if version not in (1,2):
         raise ValueError ("unsupported block version: %d" % (version,))
     count = unpack_var_int (data, pos)
     transactions = []
     for i in range (count):
         transactions.append (unpack_tx (data, pos))
     pos1 = pos.val
-    return BLOCK (prev_block, merkle_root, timestamp, bits, nonce, transactions, raw=data[pos0:pos1])
+    return BLOCK (version, prev_block, merkle_root, timestamp, bits, nonce, transactions, raw=data[pos0:pos1])
 
 def unpack_block_header (data):
     # version, prev_block, merkle_root, timestamp, bits, nonce
     return struct.unpack ('<I32s32sIII', data)
 
+# override
+unpack_block_header = caesure.proto.unpack_block_header
+
 # --------------------------------------------------------------------------------
 # block_db file format: (<8 bytes of size> <block>)+
+
+ZERO_BLOCK = '00' * 32
 
 class block_db:
 
@@ -801,16 +822,16 @@ class block_db:
         self.next = {}
         self.block_num = {}
         self.num_block = {}
-        self.last_block = '00' * 32
+        self.last_block = 0
         self.build_block_chain()
         self.file = None
-        # hold new blocks until they link in
-        self.embargo = {}
 
     def get_header (self, name):
         path = os.path.join ('blocks', name)
         return open (path).read (80)
 
+    # block can have only one previous block, but may have multiple
+    #  next blocks.
     def build_block_chain (self):
         if not os.path.isfile (BLOCKS_PATH):
             open (BLOCKS_PATH, 'wb').write('')
@@ -818,13 +839,9 @@ class block_db:
         print 'reading block headers...'
         file.seek (0)
         i = -1
-        last = None
-        name = '00' * 32
-        self.next[name] = genesis_block_hash
-        self.block_num[name] = -1
-        self.prev[genesis_block_hash] = name
-        self.block_num[genesis_block_hash] = 0
-        self.num_block[0] = genesis_block_hash
+        name = ZERO_BLOCK
+        # first, read all the blocks
+        t0 = timer()
         while 1:
             pos = file.tell()
             size = file.read (8)
@@ -838,18 +855,17 @@ class block_db:
                 # skip the rest of the block
                 file.seek (size-80, 1)
                 prev_block = hexify (prev_block, True)
-                assert prev_block == name
                 name = hexify (dhash (header), True)
                 self.prev[name] = prev_block
-                self.next[prev_block] = name
+                self.next.setdefault (prev_block, set()).add (name)
                 i += 1
                 self.block_num[name] = i
-                self.num_block[i] = name
+                self.num_block.setdefault (i, set()).add (name)
                 self.blocks[name] = pos
-        self.last_block = name
-        self.last_block_index = i
+        self.last_block = i
         print 'last block (%d): %s' % (i, name)
         file.close()
+        print '%.02f secs to load block chain' % (t0.end())
         self.read_only_file = open (BLOCKS_PATH, 'rb')
 
     def open_for_append (self):
@@ -864,70 +880,45 @@ class block_db:
         return self.read_only_file.read (size)
 
     def __getitem__ (self, name):
-        return unpack_block (self.get_block (name))
+        b = BLOCK()
+        b.unpack (self.get_block (name))
+        return b
 
     def by_num (self, num):
-        return self[self.num_block[num]]
+        # fetch *one* of the set, beware all callers of this
+        return self[list(self.num_block[num])[0]]
 
     def add (self, name, block):
         if self.blocks.has_key (name):
             print 'ignoring block we already have:', name
+        elif not self.block_num.has_key (block.prev_block) and block.prev_block != ZERO_BLOCK:
+            # if we don't have the previous block, there's no
+            #  point in remembering it at all.  toss it.
+            pass
         else:
-            for name0, block0 in self.embargo.iteritems():
-                if name0 == block.prev_block:
-                    # case 0: it links to an embargo block (normal case)
-                    #    * release that embargo block
-                    #    * toss any other embargo blocks
-                    #    * embargo this block
-                    self.release_embargo (name0, block0)
-                    # Note: a full node will need to inject any lost txs back into the network.
-                    if len (self.embargo) > 2:
-                        print 'tossing %d orphan embargo blocks' % (len(orphans),)
-                        del self.embargo[name]
-                        self.toss_orphan_blocks (self.embargo.items())
-                    self.embargo = { name:block }
-                    break
-            else:
-                if block.prev_block == self.last_block:
-                    # case 1: it links to the last block (racing blocks / competing subnet)
-                    #    * add to the embargo list
-                    self.embargo[name] = block
-                else:
-                    # case 2: it links to neither (problem or lame hack attempt?)
-                    #    * toss it
-                    print 'tossing orphan block: %s' % (name,)
-                    self.toss_orphan_blocks ([(name, block)])
+            self.write_block (name, block)
 
-    def toss_orphan_blocks (self, orphans):
-        # for now, just dump them into a binary log file
-        f = open ('orphans.bin', 'ab')
-        for name, block in orphans:
-            f.write (struct.pack ('<Q', len(block.raw)))
-            f.write (block.raw)
-        f.close()
-
-    def release_embargo (self, name, block):
+    def write_block (self, name, block):
         if self.file is None:
             self.open_for_append()
-        if self.has_key (block.prev_block):
-            size = len (block.raw)
-            pos = self.file.tell()
-            self.file.write (struct.pack ('<Q', size))
-            self.file.write (block.raw)
-            self.file.flush()
-            self.prev[name] = block.prev_block
-            self.next[block.prev_block] = name
-            self.blocks[name] = pos
-            print 'wrote block %s' % (name,)
-            i = self.block_num[block.prev_block]
-            self.block_num[name] = i+1
-            self.num_block[i+1] = name
-            self.last_block = name
-            self.last_block_index = i+1
-            if the_wallet:
-                the_wallet.new_block (block)
+        size = len (block.raw)
+        pos = self.file.tell()
+        self.file.write (struct.pack ('<Q', size))
+        self.file.write (block.raw)
+        self.file.flush()
+        self.prev[name] = block.prev_block
+        self.next.setdefault (block.prev_block, set()).add (name)
+        self.blocks[name] = pos
+        if block.prev_block == ZERO_BLOCK:
+            i = -1
         else:
-            print 'cannot chain block %s' % (name,)
+            i = self.block_num[block.prev_block]
+        self.block_num[name] = i+1
+        self.num_block.setdefault (i+1, set()).add (name)
+        self.last_block = i+1
+        if the_wallet:
+            # XXX: only if it's in the chain
+            the_wallet.new_block (block)
 
     def has_key (self, name):
         return self.prev.has_key (name)
@@ -936,81 +927,119 @@ class block_db:
 #                               protocol
 # --------------------------------------------------------------------------------
 
-def make_verack():
-    return (
-        BITCOIN_MAGIC + 
-        'verack\x00\x00\x00\x00\x00\x00' # verackNUL...
-        '\x00\x00\x00\x00'               # payload length == 0
-        )
-
-# state machine.
-HEADER   = 0 # waiting for a header
-CHECKSUM = 1 # waiting for a checksum
-PAYLOAD  = 2 # waiting for a payload
-
 class BadState (Exception):
     pass
 
-class connection (asynchat.async_chat):
+# we need a way to do command/response on the connection, and we need to do something
+#   to handle asynchronous commands (like continual inv) as well.  So I think we
+#   need a mechanism to identify which things are waiting for responses (hopefully
+#   the protocol makes this easy?).
+#
+# how to distinguish the answer we expected from an async one?  can we do it at the
+#   protocol level?
+#   addr: in response to getaddr: ok this one we can consider to not be command/response?
+#   inv: this one I think we can figure out by checking the answer?
 
-    # my client version when I started this code
-    version = 31900
+# commands are getblocks, getheaders.  we've never used getheaders, so the only
+#   ACTUAL command is getblocks.  hmmm.. maybe that's why I did this async?
+#
+# so we can make a fifo/cv/etc for managing the getblocks/inv/etc 
 
-    def __init__ (self, addr='127.0.0.1'):
+# messages:            expect-async?   command    response   response-to
+# 3.1 version                *            X           
+# 3.2 verack                                          X        version
+# 3.3 addr                   X                        X        getaddr
+# 3.4 inv                    X                        X        getblocks
+# 3.5 getdata                                         X        inv
+# 3.6 notfound                                        X        getdata
+# 3.7 getblocks                           X
+# 3.8 getheaders                          X
+# 3.9 tx                                              X        getdata
+# 3.10 block                                          X        getdata
+# 3.11 headers                                        X        getheaders
+# 3.12 getaddr                            X
+
+# for IP transactions (used?)
+# 3.13 checkorder
+# 3.14 submitorder
+# 3.15 reply
+
+# 3.16 ping                  X             
+# 3.18 alert                 X
+
+
+# ignore for now?
+# 3.17 filterload, filteradd, filterclear, merkleblock
+
+# the only totally unsolicited packets we expect are <addr>, <inv>
+
+class connection:
+
+    # protocol was changed to reflect *protocol* version, not bitcoin-client-version
+    version = 60002 # trying to update protocol from 60001 mar 2013
+
+    def __init__ (self, addr='127.0.0.1', port=BITCOIN_PORT):
         self.addr = addr
+        self.port = port
         self.nonce = make_nonce()
-        self.conn = socket.socket (socket.AF_INET, socket.SOCK_STREAM)
-        asynchat.async_chat.__init__ (self, self.conn)
+        self.conn = coro.tcp_sock()
+        self.stream = coro.read_stream.sock_stream (self.conn)
         self.addr = addr
-        self.ibuffer = []
         self.seeking = []
         self.pending = {}
-        self.state_header()
         self.packet_count = 0
-        self.connect ((addr, BITCOIN_PORT))
         if not the_block_db.prev:
             # totally empty block database, seek the genesis block
             self.seeking.append (genesis_block_hash)
+        coro.spawn (self.go)
 
-    def collect_incoming_data (self, data):
-        self.ibuffer.append (data)
+    def send (self, data):
+        W ('=> %r\n' % (data[:100],))
+        self.conn.send (data)
 
-    def handle_error (self):
-        print 'error on %r' % (self,)
+    def pack_version (self):
+        data = struct.pack ('<IQQ', self.version, 1, int(time.time()))
+        data += pack_net_addr ((1, (self.addr, self.port)))
+        data += pack_net_addr ((1, (my_addr, BITCOIN_PORT)))
+        data += struct.pack ('<Q', self.nonce)
+        data += pack_var_str ('/caesure:20130306/')
+        start_height = the_block_db.last_block
+        if start_height < 0:
+            start_height = 0
+        # ignore bip37 for now - leave True
+        data += struct.pack ('<IB', start_height, 1)
+        return make_packet ('version', data)
+
+    def go (self):
+        global ov, mv
+        self.conn.connect ((self.addr, self.port))
         try:
+            the_connection_list.append (self)
+            data = self.pack_version()
+            mv = caesure.proto.unpack_version (data[24:])
+            mv.dump (sys.stderr)
+            self.send (data)
+            while 1:
+                data = self.stream.read_exact (24)
+                if not data:
+                    W ('connection closed.\n')
+                    break
+                #W ('data=%r\n' % (data,))
+                magic, command, length, checksum = struct.unpack ('<I12sII', data)
+                command = command.strip ('\x00')
+                W ('cmd: %r\n' % (command,))
+                self.packet_count += 1
+                self.header = magic, command, length
+                # XXX verify checksum
+                if length:
+                    payload = self.stream.read_exact (length)
+                else:
+                    payload = ''
+                #W ('payload=%r\n' % (payload,))
+                self.do_command (command, payload)
+        finally:
             the_connection_list.remove (self)
-        except ValueError:
-            pass
-        self.close()
-
-    def handle_connect (self):
-        self.push (
-            pack_version (
-                (my_addr, BITCOIN_PORT),
-                (self.addr, BITCOIN_PORT),
-                self.nonce
-                )
-            )
-        the_connection_list.append (self)
-
-    def handle_close (self):
-        try:
-            the_connection_list.remove (self)
-        except:
-            pass
-
-    def state_header (self):
-        self.state = HEADER
-        self.set_terminator (20)
-
-    def state_checksum (self):
-        self.state = CHECKSUM
-        self.set_terminator (4)
-
-    def state_payload (self, length):
-        assert (length > 0)
-        self.state = PAYLOAD
-        self.set_terminator (length)
+            self.conn.close()
 
     def check_command_name (self, command):
         for ch in command:
@@ -1018,100 +1047,88 @@ class connection (asynchat.async_chat):
                 return False
         return True
 
-    def found_terminator (self):
-        data, self.ibuffer = ''.join (self.ibuffer), []
-        if self.state == HEADER:
-            # ok, we got a header
-            magic, command, length = struct.unpack ('<I12sI', data)
-            command = command.strip ('\x00')
-            print 'cmd:', command
-            self.packet_count += 1
-            self.header = magic, command, length
-            if command not in ('version', 'verack'):
-                self.state_checksum()
-            elif length == 0:
-                self.do_command (command, '')
-                self.state_header()
-            else:
-                self.state_payload (length)
-        elif self.state == CHECKSUM:
-            magic, command, length = self.header
-            self.checksum, = struct.unpack ('<I', data)
-            # XXX actually verify the checksum, duh
-            self.state_payload (length)
-        elif self.state == PAYLOAD:
-            magic, command, length = self.header
-            self.do_command (command, data)
-            self.state_header()
-        else:
-            raise BadState (self.state)
-            
     def do_command (self, cmd, data):
         if self.check_command_name (cmd):
             try:
                 method = getattr (self, 'cmd_%s' % cmd,)
             except AttributeError:
-                print 'no support for "%s" command' % (cmd,)
+                W ('no support for "%s" command\n' % (cmd,))
             else:
                 try:
                     method (data)
                 except:
-                    (file, fun, line), t, v, tbinfo = asyncore.compact_traceback()
-                    print 'caesure error: %s, %s: file: %s line: %s' % (t, v, file, line)
-                    print '     ********** problem processing %r command: packet=%r' % (cmd, data)
+                    W ('caesure error: %r\n' % (coro.compact_traceback(),))
+                    W ('     ********** problem processing %r command\n' % (cmd,))
         else:
-            print 'bad command: "%r", ignoring' % (cmd,)
+            W ('bad command: "%r", ignoring\n' % (cmd,))
+
+    max_pending = 50
 
     def kick_seeking (self):
-        if len (self.seeking) and len (self.pending) < 10:
-            ask, self.seeking = self.seeking[:10], self.seeking[10:]
+        if len (self.seeking) and len (self.pending) < self.max_pending:
+            ask, self.seeking = self.seeking[:self.max_pending], self.seeking[self.max_pending:]
             payload = [pack_var_int (len(ask))]
             for name in ask:
                 hash = unhexify (name, True)
                 self.pending[name] = True
                 payload.append (struct.pack ('<I32s', OBJ_BLOCK, hash))
             print 'requesting %d blocks' % (len (ask),)
-            packet = make_packet ('getdata', ''.join (payload))
-            self.push (packet)
-        if (the_block_db.last_block_index >= 0
-            and the_block_db.last_block_index < self.other_version.start_height):
+            self.send (make_packet ('getdata', ''.join (payload)))
+        if the_block_db.last_block == -1:
+            # we already requested the genesis block, hold off...
+            pass
+        elif the_block_db.last_block < self.other_version.start_height:
             # we still need more blocks
-            self.getblocks()
+            if not len (self.pending):
+                self.getblocks()
 
-    # bootstrapping a block collection.  It'd be nice if we could just ask
-    # for blocks after '00'*32, but getblocks returns a list starting with
-    # block 1 first, not block 0.
     def getblocks (self):
-        # the wiki seems to have changed the description of this packet,
-        #  and I can't make any sense out of what it's supposed to do when
-        #  <count> is greater than one.
-        start = the_block_db.last_block
+        hashes = self.set_for_getblocks()
+        hashes.append ('\x00' * 32)
         payload = ''.join ([
             struct.pack ('<I', self.version),
-            pack_var_int (1),
-            unhexify (start, flip=True),
-            '\x00' * 32,
-            ])
-        packet = make_packet ('getblocks', payload)
-        self.push (packet)
+            pack_var_int (len(hashes)-1), # count does not include hash_stop
+            ] + hashes
+            )
+        self.send (make_packet ('getblocks', payload))
 
+    # see https://en.bitcoin.it/wiki/Satoshi_Client_Block_Exchange
+    # "The getblocks message contains multiple block hashes that the
+    #  requesting node already possesses, in order to help the remote
+    #  note find the latest common block between the nodes. The list of
+    #  hashes starts with the latest block and goes back ten and then
+    #  doubles in an exponential progression until the genesis block is
+    #  reached."
+
+    def set_for_getblocks (self):
+        db = the_block_db
+        n = db.last_block
+        result = []
+        i = 0
+        step = 1
+        while n > 0:
+            name = list(db.num_block[n])[0]
+            result.append (unhexify (name, flip=True))
+            n -= step
+            i += 1
+            if i >= 10:
+                step *= 2
+        return result
+    
     def getdata (self, kind, name):
         kind = {'TX':1,'BLOCK':2}[kind.upper()]
         # decode hash
         hash = unhexify (name, flip=True)
         payload = [pack_var_int (1)]
         payload.append (struct.pack ('<I32s', kind, hash))
-        packet = make_packet ('getdata', ''.join (payload))
-        self.push (packet)
+        self.send (make_packet ('getdata', ''.join (payload)))
 
     def cmd_version (self, data):
         # packet traces show VERSION, VERSION, VERACK, VERACK.
-        print 'in cmd_version'
         self.other_version = unpack_version (data)
-        self.push (make_verack())
+        self.send (make_packet ('verack', ''))
 
     def cmd_verack (self, data):
-        print 'in cmd_verack'
         if not len(the_block_db.blocks):
             self.seeking = [genesis_block_hash]
         self.kick_seeking()
@@ -1126,26 +1143,27 @@ class connection (asynchat.async_chat):
         for objid, hash in pairs:
             if objid == OBJ_BLOCK:
                 name = hexify (hash, True)
-                # XXX check the embargo first!!!
                 if not the_block_db.has_key (name):
                     self.seeking.append (name)
         self.kick_seeking()
 
     def cmd_getdata (self, data):
-        return unpack_inv (data, position())
+        return caesure.proto.unpack_getdata (data)
 
     def cmd_tx (self, data):
-        return unpack_tx (data, position())
+        return caesure.proto.make_tx (data)
 
     def cmd_block (self, data):
+        global last_block
         # the name of a block is the hash of its 'header', which
         #  lives in the first 80 bytes.
         name = hexify (dhash (data[:80]), True)
         # were we waiting for this block?
-        # XXX check the embargo as well
         if self.pending.has_key (name):
             del self.pending[name]
-        b = unpack_block (data)
+        b = BLOCK()
+        b.unpack (data)
+        last_block = b
         try:
             b.check_rules()
         except BadBlock as reason:
@@ -1163,16 +1181,18 @@ class connection (asynchat.async_chat):
         payload   = unpack_var_str (data, pos)
         signature = unpack_var_str (data, pos)
         # XXX verify signature
-        print 'alert: %r' % (payload,)
+        W ('alert: sig=%r payload=%r\n' % (signature, payload,))
 
 the_wallet = None
 the_block_db = None
 the_connection_list = []
 
+# Mar 2013 fetched from https://github.com/bitcoin/bitcoin/blob/master/src/net.cpp
 dns_seeds = [
     "bitseed.xf2.org",
-    "bitseed.bitcoin.org.uk",
     "dnsseed.bluematt.me",
+    "seed.bitcoin.sipa.be",
+    "dnsseed.bitcoin.dashjr.org",
     ]
 
 def valid_ip (s):
@@ -1233,13 +1253,18 @@ if __name__ == '__main__':
 
     if network:
         if do_monitor:
-            import monitor
-            m = monitor.monitor_server()
+            import coro.backdoor
+            coro.spawn (coro.backdoor.serve, unix_path='/tmp/caesure.bd')
         if do_admin:
-            h = asynhttp.http_server ('127.0.0.1', 8380)
+            import coro.http
             import webadmin
-            h.install_handler (webadmin.handler())
-        asyncore.loop()
+            import zlib
+            h = coro.http.server()
+            coro.spawn (h.start, (('127.0.0.1', 8380)))
+            h.push_handler (webadmin.handler())
+            h.push_handler (coro.http.handlers.coro_status_handler())
+            h.push_handler (coro.http.handlers.favicon_handler (zlib.compress (webadmin.favicon)))
+        coro.event_loop()
     else:
         # database browsing mode
         db = the_block_db # alias
