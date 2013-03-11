@@ -653,64 +653,11 @@ def pack_var_int (n):
 def pack_var_str (s):
     return pack_var_int (len (s)) + s
 
-def make_packet (command, payload):
-    lc = len(command)
-    assert (lc < 12)
-    cmd = command + ('\x00' * (12 - lc))
-    h = dhash (payload)
-    checksum, = struct.unpack ('<I', h[:4])
-    return struct.pack (
-        '<4s12sII',
-        BITCOIN_MAGIC,
-        cmd,
-        len(payload),
-        checksum
-        ) + payload
-
-class proto_version:
-    pass
-
-def unpack_version (data):
-    W ('unpack_version %r\n' % (data,))
-    pos = position()
-    v = proto_version()
-    v.version, v.services, v.timestamp = unpack_pos ('<IQQ', data, pos)
-    v.me_addr = unpack_net_addr (data, pos)
-    v.you_addr = unpack_net_addr (data, pos)
-    v.nonce = unpack_pos ('<Q', data, pos)
-    v.sub_version_num = unpack_var_str (data, pos)
-    v.start_height, = unpack_pos ('<I', data, pos)
-    print pp (v.__dict__)
-    return v
-
-def unpack_inv (data, pos):
-    count = unpack_var_int (data, pos)
-    result = []
-    for i in range (count):
-        objid, hash = unpack_pos ('<I32s', data, pos)
-        objid_str = object_types.get (objid, "Unknown")
-        result.append ((objid, hash))
-        print objid_str, hexify (hash, flip=True)
-    return result
-
 def pack_inv (pairs):
     result = [pack_var_int (len(pairs))]
     for objid, hash in pairs:
         result.append (struct.pack ('<I32s', objid, hash))
     return ''.join (result)
-
-def unpack_addr (data):
-    pos = position()
-    count = unpack_var_int (data, pos)
-    for i in range (count):
-        # timestamp & address
-        timestamp, = unpack_pos ('<I', data, pos)
-        net_addr = unpack_net_addr (data, pos)
-        print timestamp, net_addr
-
-def unpack_getdata (data, pos):
-    # identical to INV
-    return unpack_inv (data, pos)
 
 class BadBlock (Exception):
     pass
@@ -786,28 +733,6 @@ class BLOCK (caesure.proto.BLOCK):
         else:
             return hash
 
-def unpack_block (data, pos=None):
-    if pos is None:
-        pos = position()
-    pos0 = pos.val
-    version, prev_block, merkle_root, timestamp, bits, nonce = unpack_pos ('<I32s32sIII', data, pos)
-    # version 2 blocks appear to be from BIP 0034 and affect coinbase... do we need to do anything?
-    if version not in (1,2):
-        raise ValueError ("unsupported block version: %d" % (version,))
-    count = unpack_var_int (data, pos)
-    transactions = []
-    for i in range (count):
-        transactions.append (unpack_tx (data, pos))
-    pos1 = pos.val
-    return BLOCK (version, prev_block, merkle_root, timestamp, bits, nonce, transactions, raw=data[pos0:pos1])
-
-def unpack_block_header (data):
-    # version, prev_block, merkle_root, timestamp, bits, nonce
-    return struct.unpack ('<I32s32sIII', data)
-
-# override
-unpack_block_header = caesure.proto.unpack_block_header
-
 # --------------------------------------------------------------------------------
 # block_db file format: (<8 bytes of size> <block>)+
 
@@ -851,7 +776,7 @@ class block_db:
                 size, = struct.unpack ('<Q', size)
                 header = file.read (80)
                 (version, prev_block, merkle_root,
-                 timestamp, bits, nonce) = unpack_block_header (header)
+                 timestamp, bits, nonce) = caesure.proto.unpack_block_header (header)
                 # skip the rest of the block
                 file.seek (size-80, 1)
                 prev_block = hexify (prev_block, True)
@@ -973,7 +898,98 @@ class BadState (Exception):
 
 # the only totally unsolicited packets we expect are <addr>, <inv>
 
-class connection:
+# I'd like to make downloading the block chain very fast if possible, by spreading
+#   the load over many connections.  The problem with this is coordinating the streams
+#   of blocks so that we get them in the order we need (otherwise any out of order block
+#   would have to be discarded).  Making this particularly tricky is that the blocks
+#   themselves do not know their height.  So we need to
+#
+#  1) collect an accurate list of blocks - in order
+#  2) solicit those blocks from various connections
+#  3) make sure to feed this to the block db in strict order.
+#
+# Let's review the process of discovering and fetching blocks
+#
+# 1) we send a <getblocks> command
+# 2) we get anv <inv> reply with up to 500 block hashes in it
+# 3) we send a <getdata> command with up to N block requests
+# 4) we get N <block> commands back (presumably in order)
+# 5) rinse, lather, repeat
+
+# I think we can parallelize the block-fetching, but we should probably
+#   stick with a serialized getblocks from just one connection.
+#
+# One super-annoyance with this whole process is the unwanted receipt of unsolicited
+#   <inv> and <block> commands from a connection that we're not ready on yet - how
+#   can we distinguish the ones we *want* from the unsolicited ones?
+#
+# Ah, here's another idea - we could request the blocks in backward order?  Hmmm...
+#   would really suck for laying them down on disk though.  Maybe we can have a layer
+#   that catches the blocks as they come in and assembles the chain on the fly?  I.e.,
+#   unpack the block objects, put them into a 'ready for disk' map?  Then maybe have
+#   another thread that's waiting for the right hashes to show up?
+#
+# Difficulty here - we do not know for sure if/when/how a block will chain until we
+#   have downloaded it.  So basically we should just collect all incoming blocks into
+#   memory, and somehow lay them down on disk as we discover their order.
+# Now, what do we do if a block comes up missing... i.e., we request a block but the
+#   other side never gives it to us (they close the connection, or are rude)?  Man, it'd
+#   be nice to have some kind of request/timeout/rpc-like thing so we could tell when
+#   this happens.  The protocol just isn't amenable to it, though.  Sigh.
+#
+# let's imagine what the holding pen would look like.
+# first it'd have to have a notion of the 'bottom' - the last block we put on disk.
+# then we have a map of blocks by predecessor hash?  So as soon as we put one in there
+# that's one-up-from-bottom we wake up the disk thread.  Ah, I like this - it's very
+# push-vs-pull-parser-thing.  Ahhhhhh... I think this would also solve our other problem,
+#  maybe if the disk thread waits too long it somehow kicks the process? [like, it's waiting
+#  on a particular block to show up?]
+#
+# so, maybe slowly coming together here...
+# disk thread: starts up a loop like this:
+#    for i in range (lo_block, hi_block):
+#        b = wait_for_block (i)
+#        db.add_block (b)
+#
+# the connection threads are all collecting blocks, throwing them into this map,
+#   and checking to see if the one showing up is the one the disk thread is waiting on...
+#
+# so here's a good question - when do we know to emit getblocks()?  it'd be nice to do it
+#   without having to wait too long... oh oh, I know... we have a set of blocks (from getblocks)
+#   that we know we're waiting on... when this set gets below a threshold we emit another getblocks
+#   command?
+#
+# so two different block maps:
+# 1) the set of blocks whose bodies we have not yet requested
+# 2) the set of blocks we have received, but not put on disk
+#
+# which threads are needed?
+# 1) disk thread - waiting to write blocks to disk
+# 2) connection threads
+# 3) purgatory thread - this will emit getblocks/getdata calls, while also deciding which connections
+#    to send them on (probably at random?) and whether to do it in parallel?
+#
+# purgatory thread can maybe manage the number of in-flight requests?
+#
+# how much of this needs to change for normal operation?  how much can stay in place?
+# disk thread - I like this
+# purgatory - I like this as well, a place to dump unconnected blocks?
+#
+# maybe the purgatory thread just exits once it catches up?  then the rest just falls into normal
+#  operation?
+# OR purgatory thread exits the 'populate' loop and enters a new loop waiting for generated blocks?
+#
+# BIG POINT: normal vs catchup behavior VERY DIFFERENT - we don't want to be validating/verifying/forwarding
+#   the blocks we receive whilst catching up!
+#
+#
+# unchained is an object holding blocks in memory.  whenever a block is added to unchained, the
+#   'bottom' hash is check to see if it's the one the disk thread is waiting for.  This gets updated
+#   and churned.
+#
+# 
+
+class base_connection:
 
     # protocol was changed to reflect *protocol* version, not bitcoin-client-version
     version = 60002 # trying to update protocol from 60001 mar 2013
@@ -983,21 +999,25 @@ class connection:
         self.port = port
         self.nonce = make_nonce()
         self.conn = coro.tcp_sock()
-        self.stream = coro.read_stream.sock_stream (self.conn)
-        self.addr = addr
-        self.seeking = []
-        self.pending = {}
         self.packet_count = 0
-        if not the_block_db.prev:
-            # totally empty block database, seek the genesis block
-            self.seeking.append (genesis_block_hash)
-        coro.spawn (self.go)
+        self.stream = coro.read_stream.sock_stream (self.conn)
 
-    def send (self, data):
-        W ('=> %r\n' % (data[:100],))
-        self.conn.send (data)
+    def send_packet (self, command, payload):
+        lc = len(command)
+        assert (lc < 12)
+        cmd = command + ('\x00' * (12 - lc))
+        h = dhash (payload)
+        checksum, = struct.unpack ('<I', h[:4])
+        packet = struct.pack (
+            '<4s12sII',
+            BITCOIN_MAGIC,
+            cmd,
+            len(payload),
+            checksum
+            ) + payload
+        self.conn.send (packet)
 
-    def pack_version (self):
+    def send_version (self):
         data = struct.pack ('<IQQ', self.version, 1, int(time.time()))
         data += pack_net_addr ((1, (self.addr, self.port)))
         data += pack_net_addr ((1, (my_addr, BITCOIN_PORT)))
@@ -1008,34 +1028,85 @@ class connection:
             start_height = 0
         # ignore bip37 for now - leave True
         data += struct.pack ('<IB', start_height, 1)
-        return make_packet ('version', data)
+        self.send_packet ('version', data)
+
+    def gen_packets (self):
+        while 1:
+            data = self.stream.read_exact (24)
+            if not data:
+                W ('connection closed.\n')
+                break
+            magic, command, length, checksum = struct.unpack ('<I12sII', data)
+            command = command.strip ('\x00')
+            W ('cmd: %r\n' % (command,))
+            self.packet_count += 1
+            self.header = magic, command, length
+            # XXX verify checksum
+            if length:
+                payload = self.stream.read_exact (length)
+            else:
+                payload = ''
+            yield (command, payload)
+
+    def getblocks (self):
+        hashes = self.set_for_getblocks()
+        hashes.append ('\x00' * 32)
+        payload = ''.join ([
+            struct.pack ('<I', self.version),
+            pack_var_int (len(hashes)-1), # count does not include hash_stop
+            ] + hashes
+            )
+        self.send_packet ('getblocks', payload)
+
+    # see https://en.bitcoin.it/wiki/Satoshi_Client_Block_Exchange
+    # "The getblocks message contains multiple block hashes that the
+    #  requesting node already possesses, in order to help the remote
+    #  note find the latest common block between the nodes. The list of
+    #  hashes starts with the latest block and goes back ten and then
+    #  doubles in an exponential progression until the genesis block is
+    #  reached."
+
+    def set_for_getblocks (self):
+        db = the_block_db
+        n = db.last_block
+        result = []
+        i = 0
+        step = 1
+        while n > 0:
+            name = list(db.num_block[n])[0]
+            result.append (unhexify (name, flip=True))
+            n -= step
+            i += 1
+            if i >= 10:
+                step *= 2
+        return result
+    
+    def getdata (self, what):
+        "request (TX|BLOCK)+ from the other side"
+        payload = [pack_var_int (len(what))]
+        for kind, name in what:
+            # decode hash
+            h = unhexify (name, flip=True)
+            payload.append (struct.pack ('<I32s', kind, h))
+        self.send_packet ('getdata', ''.join (payload))
+
+class connection (base_connection):
+
+    def __init__ (self, addr='127.0.0.1', port=BITCOIN_PORT):
+        base_connection.__init__ (self, addr, port)
+        self.seeking = []
+        self.pending = {}
+        if not the_block_db.prev:
+            # totally empty block database, seek the genesis block
+            self.seeking.append (genesis_block_hash)
+        coro.spawn (self.go)
 
     def go (self):
-        global ov, mv
         self.conn.connect ((self.addr, self.port))
         try:
             the_connection_list.append (self)
-            data = self.pack_version()
-            mv = caesure.proto.unpack_version (data[24:])
-            mv.dump (sys.stderr)
-            self.send (data)
-            while 1:
-                data = self.stream.read_exact (24)
-                if not data:
-                    W ('connection closed.\n')
-                    break
-                #W ('data=%r\n' % (data,))
-                magic, command, length, checksum = struct.unpack ('<I12sII', data)
-                command = command.strip ('\x00')
-                W ('cmd: %r\n' % (command,))
-                self.packet_count += 1
-                self.header = magic, command, length
-                # XXX verify checksum
-                if length:
-                    payload = self.stream.read_exact (length)
-                else:
-                    payload = ''
-                #W ('payload=%r\n' % (payload,))
+            self.send_version()
+            for command, payload in self.gen_packets():
                 self.do_command (command, payload)
         finally:
             the_connection_list.remove (self)
@@ -1067,13 +1138,9 @@ class connection:
     def kick_seeking (self):
         if len (self.seeking) and len (self.pending) < self.max_pending:
             ask, self.seeking = self.seeking[:self.max_pending], self.seeking[self.max_pending:]
-            payload = [pack_var_int (len(ask))]
-            for name in ask:
-                hash = unhexify (name, True)
-                self.pending[name] = True
-                payload.append (struct.pack ('<I32s', OBJ_BLOCK, hash))
+            what = [(OBJ_BLOCK, name) for name in ask]
             print 'requesting %d blocks' % (len (ask),)
-            self.send (make_packet ('getdata', ''.join (payload)))
+            self.getdata (what)
         if the_block_db.last_block == -1:
             # we already requested the genesis block, hold off...
             pass
@@ -1082,51 +1149,10 @@ class connection:
             if not len (self.pending):
                 self.getblocks()
 
-    def getblocks (self):
-        hashes = self.set_for_getblocks()
-        hashes.append ('\x00' * 32)
-        payload = ''.join ([
-            struct.pack ('<I', self.version),
-            pack_var_int (len(hashes)-1), # count does not include hash_stop
-            ] + hashes
-            )
-        self.send (make_packet ('getblocks', payload))
-
-    # see https://en.bitcoin.it/wiki/Satoshi_Client_Block_Exchange
-    # "The getblocks message contains multiple block hashes that the
-    #  requesting node already possesses, in order to help the remote
-    #  note find the latest common block between the nodes. The list of
-    #  hashes starts with the latest block and goes back ten and then
-    #  doubles in an exponential progression until the genesis block is
-    #  reached."
-
-    def set_for_getblocks (self):
-        db = the_block_db
-        n = db.last_block
-        result = []
-        i = 0
-        step = 1
-        while n > 0:
-            name = list(db.num_block[n])[0]
-            result.append (unhexify (name, flip=True))
-            n -= step
-            i += 1
-            if i >= 10:
-                step *= 2
-        return result
-    
-    def getdata (self, kind, name):
-        kind = {'TX':1,'BLOCK':2}[kind.upper()]
-        # decode hash
-        hash = unhexify (name, flip=True)
-        payload = [pack_var_int (1)]
-        payload.append (struct.pack ('<I32s', kind, hash))
-        self.send (make_packet ('getdata', ''.join (payload)))
-
     def cmd_version (self, data):
         # packet traces show VERSION, VERSION, VERACK, VERACK.
-        self.other_version = unpack_version (data)
-        self.send (make_packet ('verack', ''))
+        self.other_version = caesure.proto.unpack_version (data)
+        self.send_packet ('verack', '')
 
     def cmd_verack (self, data):
         if not len(the_block_db.blocks):
@@ -1134,10 +1160,11 @@ class connection:
         self.kick_seeking()
 
     def cmd_addr (self, data):
-        return unpack_addr (data)
+        addr = caesure.proto.unpack_addr (data)
+        print addr
 
     def cmd_inv (self, data):
-        pairs = unpack_inv (data, position())
+        pairs = caesure.proto.unpack_inv (data)
         # request those blocks we don't have...
         seeking = []
         for objid, hash in pairs:
