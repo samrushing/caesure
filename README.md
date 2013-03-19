@@ -92,8 +92,12 @@ wallet
 
 To have access to a wallet, use: [-w <wallet-path>]
 
-$ python bitcoin.py -w wallet.bin
+    $ python bitcoin.py -w wallet.bin
+
 NOTE: NOT COMPATIBLE WITH THE OFFICIAL CLIENT WALLET.DAT
+
+I'll probably remove the wallet feature altogether, as it doesn't really belong
+in a server.
 
 paper keys
 ----------
