@@ -344,6 +344,12 @@ def is_true (v):
     # check against the two forms of ZERO
     return v not in ('', '\x80')
 
+# the wiki says that numeric ops are limited to 32-bit integers,
+#  however at least one of the test cases (which try to enforce this)
+#  seem to violate this:
+# ["2147483647 DUP ADD", "4294967294 EQUAL", ">32 bit EQUAL is valid"],
+# by adding INT32_MAX to itself we overflow a signed 32-bit int.
+
 lo32 = -(2**31)
 hi32 = (2**31)-1
 
