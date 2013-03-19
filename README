@@ -7,11 +7,11 @@ Help Fund This Project! 1Ncui8YjT7JJD91tkf42dijPnqywbupf7w
 
 note: this is *not* a JSON/RPC client, it's an implementation of the bitcoin protocol.
 
-requirements: a relatively recent python, probably 2.5+ or so
-either: A) an openssl library.
-        B) the pure-python ecdsa package.
+requirements:
 
-I have tested this code using openssl on osx 10.6 (64-bit), linux ubuntu (32-bit), and freebsd-7 (64-bit).
+  1. shrapnel
+  2. either a) an openssl library or b) the pure-python ecdsa package
+
 
 name:
 
@@ -19,35 +19,11 @@ It's a pun on the words Caesar and Seizure.  "Render unto Caesar..."
 
 status:
 
-================================================================================
-This code is fairly close to being able to be a full participant on the network.
+In the midst of being ported to shrapnel.  This leaves out Windows users, but still
+allows bsd, darwin/osx, & linux.
 
-A couple of issues remain:
-  1) orphan blocks are not always correctly handled.  I think the
-     'embargo' concept may not work, and that it may be necessary to
-     fully implement the idea of multiple alternative block chains.
-     This has implications for the wallet: if there are multiple live
-     chains, there are multiple possible wallet states.
-  2) most of the 'protocol/network rules' are implemented, but not all of them.
-
-I should say here that finishing this code could help the bitcoin
-network tremendously, since its event-driven design makes it very
-scalable.  This code should be able to connect simultaneously to many
-hundreds of other nodes.  [The current bitcoin network is very
-constrained, mostly because there is only one real implementation, and
-it's a desktop client - this is a serious hindrance to bringing nodes
-out from behind firewalls.  Servers should not have wallets, and they
-should not be behind NATs and firewalls]
-
-Another feature that would be really nice: to generalize the
-block-chain-download process so that it can pull the block chain from
-many nodes at once.  This would radically speed up the initialization
-process for new nodes.
-
-That said, as of Sep 2011, I have other priorities at the moment.
-Perhaps if someone were to drop a little BTC into the donation bucket
-I might be more interested in working on it.  As it stands not a
-single donation has been made. (hint, hint).
+In addition to the port to shrapnel, some performance-sensitive code is being moved
+to cython, including packet codec, b58, hexify, etc...
 
 ================================================================================
 
@@ -64,7 +40,9 @@ database.  This will take a while, even if you're talking to localhost.
 You can monitor the progress like this:
 
 from another terminal:
-$ telnet localhost 8023
+$ telnet /tmp/caesure.bd
+
+[telnet to a unix sock is bsd only, try netcat on linux or bind to 127.0.0.1]
 
 you'll get a python prompt:
 
@@ -82,20 +60,11 @@ you'll get a python prompt:
 >>> 
 [...]
 
-IMPORTANT NOTE:  If you're running this on a multi-user machine, the python prompt
-sitting on port 8023 will be a bad idea.  You have two choices: remove the line that
-starts that server (near the bottom of the file, "m = monitor.monitor_server()"),
-*or*, if your operating system supports it, bind the socket to an AF_UNIX socket and
-telnet to that file.
-
-The monitor interface is there to speed up development, and will eventually be
-removed completely - probably replaced by a web admin interface.
-
 --------------------------------------------------------------------------------
 
 web admin.
 
-In client mode ('-c'), a web admin server is also started up on localhost:
+With '-a', a web UI is brought up on localhost:
 try http://localhost:8380/admin/ (note: that trailing slash is important)
 
 *** This is getting more useful, try it! ***
