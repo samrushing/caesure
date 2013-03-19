@@ -11,7 +11,7 @@ from ecdsa_ssl import KEY
 #from ecdsa_pure import KEY
 
 try:
-    from zcoro.asn1.ber import decode
+    from coro.asn1.ber import decode
     def get_keys (der):
         d = decode (der)
         pri = d[0][1]
@@ -69,9 +69,14 @@ def pkey_to_address (s):
         )
         
 if __name__ == '__main__':
-    k = KEY()
-    k.generate()
-    pri, pub = get_keys (k.get_privkey())
-    print 'private:', pkey_to_address (pri)
-    print 'public:', key_to_address (rhash (pub))
-    
+    import sys
+    if len(sys.argv) > 1:
+        nkeys = int (sys.argv[1])
+    else:
+        nkeys = 1
+    for i in range (nkeys):
+        k = KEY()
+        k.generate()
+        pri, pub = get_keys (k.get_privkey())
+        print 'private:', pkey_to_address (pri)
+        print 'public:', key_to_address (rhash (pub))
