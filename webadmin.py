@@ -141,15 +141,15 @@ class handler:
     def dump_block (self, request, b, num, name):
         RP = request.push
         RP ('\r\n'.join ([
-                    '<br>block: %d' % (num,),
-                    '<br>name: %s' % (name,),
-                    '<br>prev_block: %s' % (b.prev_block,),
-                    '<br>merkle_root: %s' % (hexify (b.merkle_root),),
-                    '<br>timestamp: %s (%s)' % (b.timestamp, time.ctime (b.timestamp)),
-                    '<br>bits: %s' % (b.bits,),
-                    '<br>nonce: %s' % (b.nonce,),
-                    '<br><a href="http://blockexplorer.com/b/%d">block explorer</a>' % (num,),
-                    ]))
+            '<br>block: %d' % (num,),
+            '<br>name: %s' % (name,),
+            '<br>prev: %s' % (b.prev_block,),
+            '<br>merk: %s' % (hexify (b.merkle_root),),
+            '<br>time: %s (%s)' % (b.timestamp, time.ctime (b.timestamp)),
+            '<br>bits: %s' % (b.bits,),
+            '<br>nonce: %s' % (b.nonce,),
+            '<br><a href="http://blockexplorer.com/b/%d">block explorer</a>' % (num,),
+        ]))
         #RP ('<pre>%d transactions\r\n' % len(b.transactions))
         RP ('<table><thead><tr><th>num</th><th>ID</th><th>inputs</th><th>outputs</th></tr></thead>')
         for i in range (len (b.transactions)):
@@ -183,7 +183,6 @@ class handler:
 
     def dump_tx (self, request, tx, tx_num):
         RP = request.push
-        #RP ('<tr><td>%s</td><td>%s</td>\r\n' % (tx_num, shorthex (dhash (tx.render()))))
         RP ('<tr><td>%s</td><td>%s</td>\r\n' % (tx_num, shorthex (dhash (tx.raw))))
         RP ('<td><table>')
         for i in range (len (tx.inputs)):
@@ -193,14 +192,13 @@ class handler:
                 tr_class = ' class="minus"'
             else:
                 col0, col1 = '', ''
-            RP ('<tr%s><td>%3d</td><td>%s:%d</td><td>%s</td><td>%s</td></tr>' % (
+            RP ('<tr%s><td>%3d</td><td>%s:%d</td><td>%s</td></tr>' % (
                     tr_class,
                     i,
                     shorthex (outpoint),
                     index,
                     shorthex (script),
-                    sequence)
-                )
+                ))
         RP ('</table></td><td><table>')
         for i in range (len (tx.outputs)):
             value, pk_script = tx.outputs[i]
@@ -277,11 +275,11 @@ class handler:
     def cmd_connect (self, request, parts):
         RP = request.push
         if request.query:
-            qparts = parse_qs (query[1:])
+            qparts = parse_qs (request.query[1:])
             if self.match_form (qparts, ['host']):
                 global bc
-                if bc:
-                    bc.close()
+                ## if bc:
+                ##     bc.close()
                 bc = connection (qparts['host'][0])
         RP ('<form>'
             'IP Address: <input type="text" name="host" value="127.0.0.1"/><br/>'
