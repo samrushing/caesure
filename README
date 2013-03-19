@@ -25,6 +25,8 @@ allows bsd, darwin/osx, & linux.
 In addition to the port to shrapnel, some performance-sensitive code is being moved
 to cython, including packet codec, b58, hexify, etc...
 
+I'm attempting to make this a full node, with tx verification etc.... script engine on the way.
+
 ================================================================================
 
 usage:
