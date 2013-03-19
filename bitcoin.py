@@ -479,37 +479,6 @@ class TX (caesure.proto.TX):
             k.set_pubkey (pubkey)
             return k.verify (hash, sig)
 
-def unpack_tx (data, pos):
-    # has its own version number
-    pos0 = pos.val
-    version, = unpack_pos ('<I', data, pos)
-    # mar 2013: I can find NO DOCUMENTATION on the upgrade to version 2 TX packets,
-    #   i've scanned through all the damned BIPS one by one.  Boy it'd be nice if the
-    #   protocol docs were kept up to date?  BIP34 mentions version 2 *blocks*, but not
-    #   transactions...
-    #if version != 1:
-    #    raise ValueError ("unknown tx version: %d" % (version,))
-    txin_count = unpack_var_int (data, pos)
-    inputs = []
-    outputs = []
-    for i in range (txin_count):
-        outpoint = unpack_pos ('<32sI', data, pos)
-        script_length = unpack_var_int (data, pos)
-        script = data[pos.val:pos.val+script_length]
-        pos.incr (script_length)
-        sequence, = unpack_pos ('<I', data, pos)
-        inputs.append ((outpoint, script, sequence))
-    txout_count = unpack_var_int (data, pos)
-    for i in range (txout_count):
-        value, = unpack_pos ('<Q', data, pos)
-        pk_script_length = unpack_var_int (data, pos)
-        pk_script = data[pos.val:pos.val+pk_script_length]
-        pos.incr (pk_script_length)
-        outputs.append ((value, pk_script))
-    lock_time, = unpack_pos ('<I', data, pos)
-    pos1 = pos.val
-    return TX (inputs, outputs, lock_time, data[pos0:pos1])
-
 # both generation and address push two values, so this is good for most things.
 
 # The two numbers pushed by the input script for generation are
