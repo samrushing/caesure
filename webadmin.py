@@ -149,6 +149,7 @@ class handler:
             '<br>bits: %s' % (b.bits,),
             '<br>nonce: %s' % (b.nonce,),
             '<br><a href="http://blockexplorer.com/b/%d">block explorer</a>' % (num,),
+            '<br><a href="http://blockchain.info/block/%s">blockchain.info</a>' % (name,),
         ]))
         #RP ('<pre>%d transactions\r\n' % len(b.transactions))
         RP ('<table><thead><tr><th>num</th><th>ID</th><th>inputs</th><th>outputs</th></tr></thead>')
