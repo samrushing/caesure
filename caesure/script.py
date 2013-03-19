@@ -263,9 +263,6 @@ class DisabledError (ScriptError):
 class BadNumber (ScriptError):
     pass
 
-# the lists of 'disabled' opcodes on the wiki seems to be out of date.
-#  afaict OP_MUL for example is live.
-
 class script_parser:
     def __init__ (self, script):
         self.s = script
@@ -700,7 +697,8 @@ do_nop8 = do_nop1
 do_nop9 = do_nop1
 do_nop10 = do_nop1
     
-# the unit tests require that these fail
+# The disabled opcodes are in a test near the top of EvalScript in script.cpp.
+# The unit tests require that these fail.
 disabled = set ([
     OP_CAT, OP_SUBSTR, OP_LEFT, OP_RIGHT, OP_INVERT, OP_AND, OP_OR, OP_XOR,
     OP_2MUL, OP_2DIV, OP_MUL, OP_DIV, OP_MOD, OP_LSHIFT, OP_RSHIFT,
