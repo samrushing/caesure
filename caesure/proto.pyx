@@ -5,6 +5,81 @@ from socket import AF_INET6, inet_ntop
 from libc.stdint cimport uint64_t, uint32_t, uint16_t, uint8_t
 from cpython.bytes cimport PyBytes_FromStringAndSize
 
+from hashlib import sha256
+
+def dhash (s):
+    return sha256(sha256(s).digest()).digest()
+
+# --------------------------------------------------------------------------------
+# hexify
+# --------------------------------------------------------------------------------
+
+cdef char *hexdigits = "0123456789abcdef"
+
+cdef _hexify (bytes s):
+    cdef int slen = len (s)
+    cdef bytes o = PyBytes_FromStringAndSize (NULL, slen * 2)
+    cdef unsigned char * a = s
+    cdef unsigned char * b = o
+    cdef int i
+    for i in range (slen):
+        b[i*2]   = hexdigits[a[i] >> 4]
+        b[i*2+1] = hexdigits[a[i] & 0xf]
+    return o
+
+cdef _flip_hexify (bytes s):
+    cdef int slen = len (s)
+    cdef bytes o = PyBytes_FromStringAndSize (NULL, slen * 2)
+    cdef unsigned char * a = s
+    cdef unsigned char * b = o
+    cdef int i
+    cdef int p
+    for i in range (slen):
+        p = (2*slen)-((i+1)*2)
+        b[p]   = hexdigits[a[i] >> 4]
+        b[p+1] = hexdigits[a[i] & 0xf]
+    return o
+
+def hexify (bytes s, bint flip=False):
+    if flip:
+        return _flip_hexify (s)
+    else:
+        return _hexify (s)
+
+# --------------------------------------------------------------------------------
+# base58
+# --------------------------------------------------------------------------------
+
+cdef char * b58_digits = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+cdef dict b58_map = {}
+cdef int i = 0
+for dig in b58_digits:
+    b58_map[dig] = i
+    i += 1
+
+def base58_encode (n):
+    cdef char buf[512]
+    cdef int i = 0
+    while n > 0:
+        n, r = divmod (n, 58)
+        buf[511-i] = b58_digits[r]
+        if i == 512:
+            raise ValueError ("integer too large")
+        i += 1
+    return buf[512-i:512]
+
+def base58_decode (bytes s):
+    n = 0
+    for ch in s:
+        n *= 58
+        digit = b58_map[ch]
+        n += digit
+    return n
+
+# --------------------------------------------------------------------------------
+# codec (well, decoder only right now)
+# --------------------------------------------------------------------------------
+
 cdef class pkt:
     cdef bytes data
     cdef unsigned char * d
@@ -93,6 +168,10 @@ cdef class pkt:
             addr = addr[7:]
         return services, (addr, port)
 
+# --------------------------------------------------------------------------------
+# messages
+# --------------------------------------------------------------------------------
+
 cdef class VERSION:
     cdef public uint32_t version
     cdef public uint64_t services
@@ -126,7 +205,8 @@ cdef class VERSION:
             '  sub_version_num=%r\n'
             '  start_height=%d\n'
             '  }\n' % (
-                self.version, self.services, self.timestamp, self.me_addr, self.you_addr, self.nonce, self.sub_version_num, self.start_height
+                self.version, self.services, self.timestamp, self.me_addr, self.you_addr,
+                self.nonce, self.sub_version_num, self.start_height
                 )
             )
 
@@ -178,38 +258,6 @@ cdef class TX:
         self.raw = data
         return self.unpack0 (pkt (data))
 
-cdef char *hexdigits = "0123456789abcdef"
-
-cdef _hexify (bytes s):
-    cdef int slen = len (s)
-    cdef bytes o = PyBytes_FromStringAndSize (NULL, slen * 2)
-    cdef unsigned char * a = s
-    cdef unsigned char * b = o
-    cdef int i
-    for i in range (slen):
-        b[i*2]   = hexdigits[a[i] >> 4]
-        b[i*2+1] = hexdigits[a[i] & 0xf]
-    return o
-
-cdef _flip_hexify (bytes s):
-    cdef int slen = len (s)
-    cdef bytes o = PyBytes_FromStringAndSize (NULL, slen * 2)
-    cdef unsigned char * a = s
-    cdef unsigned char * b = o
-    cdef int i
-    cdef int p
-    for i in range (slen):
-        p = (2*slen)-((i+1)*2)
-        b[p]   = hexdigits[a[i] >> 4]
-        b[p+1] = hexdigits[a[i] & 0xf]
-    return o
-
-def hexify (bytes s, bint flip=False):
-    if flip:
-        return _flip_hexify (s)
-    else:
-        return _hexify (s)
-
 cdef class BLOCK:
     cdef public uint32_t version
     # XXX consider putting these here as char x[32]
@@ -220,6 +268,7 @@ cdef class BLOCK:
     cdef public uint32_t nonce
     cdef public list transactions
     cdef public bytes raw
+    cdef public bytes name
     
     def make_TX (self):
         return TX()
@@ -242,6 +291,11 @@ cdef class BLOCK:
             tx = self.make_TX()
             tx.unpack1 (p)
             self.transactions.append (tx)
+        self.name = self.get_name()
+
+    def get_name (self):
+        cdef bytes header = self.raw[:80]
+        return _flip_hexify (dhash (header))
 
 def unpack_block_header (bytes data):
     cdef pkt p = pkt (data)
@@ -292,3 +346,9 @@ def unpack_addr (data):
         
 def unpack_getdata (data):
     return unpack_inv (data)
+
+def unpack_alert (data):
+    cdef pkt p = pkt (data)
+    cdef bytes payload = p.unpack_var_str()
+    cdef bytes signature = p.unpack_var_str()
+    return payload, signature
