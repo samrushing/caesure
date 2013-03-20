@@ -50,6 +50,7 @@ table { width:100%; }
 tr.inrow { border:1px green; }
 tr.plus > td { background-color:#80ff80; }
 tr.minus > td { background-color:#ff8080; }
+a.alert { color:#ff0000; }
 </style>
 """
 
@@ -176,8 +177,19 @@ class handler:
                 RP ('&nbsp;&nbsp;Prev Block<br>')
             if db.next.has_key (name):
                 names = list (db.next[name])
-                for i in range (len (names)):
-                    RP ('&nbsp;&nbsp;<a href="/admin/block/%s">Next Block %d</a><br>' % (names[i], i))
+                if len(names) > 1:
+                    longer, length = longest (names)
+                    for i in range (len (names)):
+                        if names[i] != longer:
+                            descrip = "Next Block (Orphan Chain)"
+                            aclass = ' class="alert" '
+                        else:
+                            descrip = "Next Block"
+                            aclass = ''
+                        RP ('&nbsp;&nbsp;<a href="/admin/block/%s" %s>%s</a>' % (names[i], aclass, descrip,))
+                else:
+                    RP ('&nbsp;&nbsp;<a href="/admin/block/%s">Next Block</a>' % (names[0],))
+                RP ('<br>')
             else:
                 RP ('&nbsp;&nbsp;Next Block<br>')
             self.dump_block (request, b, num, name)
@@ -354,3 +366,36 @@ class handler:
             the_wallet.write_value_cache()
         coro.sleep_relative (1)
         coro.set_exit()
+
+def chain_gen (name):
+    db = the_block_db
+    while 1:
+        if db.next.has_key (name):
+            names = db.next[name]
+            if len(names) > 1:
+                for x in longest (names):
+                    yield 1
+            else:
+                name = list(names)[0]
+                yield 1
+        else:
+            break
+
+def longest (names):
+    gens = [ (name, chain_gen (name)) for name in list (names) ]
+    ng = len (gens)
+    left = ng
+    n = 0
+    while left > 1:
+        for i in range (ng):
+            if gens[i]:
+                name, gen = gens[i]
+                try:
+                    gen.next()
+                except StopIteration:
+                    gens[i] = None
+                    left -= 1
+        n += 1
+    [(name, _)] = [x for x in gens if x is not None]
+    return name, n
+
