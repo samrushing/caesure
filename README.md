@@ -82,28 +82,13 @@ testnet
 
 To use testnet, give the '-t' argument along with '-c'.  This will change several
 global values, and should NOT impact your block database - it uses different
-filenames.  HOWEVER you should use a different wallet path (the '-w' argument).
-
-[wallet/addresses, etc.. are broken because of a prefix.  will roll in changes from
- joric once I figure out the socially acceptable way to do so on github]
-
-wallet
-------
-
-To have access to a wallet, use: [-w <wallet-path>]
-
-    $ python bitcoin.py -w wallet.bin
-
-NOTE: NOT COMPATIBLE WITH THE OFFICIAL CLIENT WALLET.DAT
-
-I'll probably remove the wallet feature altogether, as it doesn't really belong
-in a server.
+filenames.
 
 paper keys
 ----------
 
 I've included a simple utility for generating paper keys.  It will generate a set
-of fresh keys and send them to stdout with the private keys in wallet import format.
+of fresh keys and send them to stdout with the private keys in 'wallet import format'.
 On my Mac, I do this...
 
     $ python paper_keys.py 5 | lpr
@@ -113,12 +98,12 @@ On my Mac, I do this...
 fun with the block chain
 ------------------------
 
-Rather than running a client, you can just start up python and play with the block
-database.  Both the block database and wallet files are written in append-only mode,
-so it's safe to open them read-only from another process, even while the client is
-running.
+Rather than running a client, you can just start up python and play
+with the block database.  The block database is written in append-only
+mode, so it's safe to open it read-only from another process, even
+while the client is running.
 
-    $ python -i bitcoin.py -w wallet.bin 
+    $ python -i bitcoin.py
     reading block headers...
     last block (135225): 0000000000000478bd4859949e91b44cc28e6a02e7bb2985df250751063e1d1f
     >>> db['0000000000000478bd4859949e91b44cc28e6a02e7bb2985df250751063e1d1f']
@@ -160,66 +145,4 @@ verify the first input of a transaction:
     >>> tx.verify (0)
     1
 
-### generate a new key/address ###
-
-NOTE: if you send money to an address that you generate, be very careful
-to preserve your wallet file!
-
-    >>> the_wallet.new_key()
-    '1AATJKbiuxUA6XJSJWSe6DVQx26ARdF1ex'
-
-    >>> the_wallet['1AATJKbiuxUA6XJSJWSe6DVQx26ARdF1ex']
-    <__main__.KEY instance at 0x1e9f08>
-
-
-*** ALPHA CODE.  This has been used for only a handful of transactions.
-*** USE AT YOUR OWN RISK.  Don't send money you're not willing to lose!
-
-### receiving bitcoins ###
-Just leave the client running.  Once the send shows up in a block, it will be seen
-by the wallet and any associated outputs will be reflected in your wallet.
-
-### sending bitcoins ###
-
-[this needs to be done via the back door so you have access to the client connection]
-
-    >>> the_wallet
-    <__main__.wallet instance at 0x43b9e0>
-    >>> w = _
-    >>> w.total_btc
-    6000000
-
-This will create a TX object
-
-    >>> w.build_send_request (6000000, '16LQbU1mTAHGgPkYWzqisF3ntxv91TdV3j') 
-    input 5000000
-    input 1000000
-    <__main__.TX instance at 0x3e838f0>
-    >>> tx = _
-    >>> tx.dump()
-    hash: eaca9674e313d2e369baecf610648f64f5bb4a6ba164be3387c7af9df48112b7
-    inputs: 2
-      0 350784530...0dc18a6:1 49304502206f60...a745a51e4 4294967295
-      1 12e0b9d6c...1cd4dca:1 4930440220236a...3b1ef50f3 4294967295
-    1 outputs
-      0 0.06000000 16LQbU1mTAHGgPkYWzqisF3ntxv91TdV3j
-    lock_time: 0
-
-You should verify the inputs before sending on...
-
-    >>> tx.verify (0)
-    1
-    >>> tx.verify (1)
-    1
-
-    >>> packet = make_packet ('tx', tx.render())
-
-This will actually send the packet.
-
-    >>> bc
-    <__main__.connection connected '127.0.0.1' at 0x458af8>
-    >>> bc.push (packet)
-
-Any change that's sent back to you will be acknowledged once it makes it into
-a block.
 
