@@ -210,6 +210,35 @@ cdef class VERSION:
                 )
             )
 
+cdef bytes pack_u16 (uint16_t n):
+    return chr(n & 0xff) + chr ((n>>8) &0xff)
+
+cdef bytes pack_u32 (uint32_t n):
+    cdef int i
+    cdef char r[4]
+    for i in range (4):
+        r[i] = n & 0xff
+        n >>= 8
+    return r[:4]
+
+cdef bytes pack_u64 (uint64_t n):
+    cdef int i
+    cdef char r[8]
+    for i in range (8):
+        r[i] = n & 0xff
+        n >>= 8
+    return r[:8]
+
+cdef bytes pack_var_int (uint64_t n):
+    if n < 0xfd:
+        return chr (<uint8_t>n)
+    elif n <= 0xffff:
+        return '\xfd' + pack_u16 (<uint16_t>n)
+    elif n <= 0xffffffff:
+        return '\xfe' + pack_u32 (<uint32_t>n)
+    else:
+        return '\xff' + pack_u64 (n)
+
 cdef class TX:
     cdef public uint32_t version
     cdef public uint32_t lock_time
@@ -225,11 +254,28 @@ cdef class TX:
         cdef uint32_t sequence = p.u32()
         return ((outpoint_hash, outpoint_index), script, sequence)
 
+    cdef pack_input (self, list result, input):
+        (outpoint_hash, outpoint_index), script, sequence = input
+        result.extend ([
+            outpoint_hash,
+            pack_u32 (outpoint_index),
+            pack_var_int (len (script)),
+            script,
+            pack_u32 (sequence),
+            ])
+
     cdef unpack_output (self, pkt p):
         cdef uint64_t value = p.u64()
         cdef uint64_t pk_script_length = p.unpack_var_int()
         cdef bytes script = p.unpack_str (pk_script_length)
         return (value, script)
+
+    cdef pack_output (self, list result, uint64_t value, bytes script):
+        result.extend ([
+            pack_u64 (value),
+            pack_var_int (len (script)),
+            script
+            ])
 
     cdef unpack0 (self, pkt p):
         cdef uint64_t txin_count
@@ -246,6 +292,17 @@ cdef class TX:
             self.outputs.append (self.unpack_output (p))
         self.lock_time = p.u32()
             
+    def pack (self):
+        cdef list result = [pack_u32 (self.version)]
+        result.append (pack_var_int (len (self.inputs)))
+        for input in self.inputs:
+            self.pack_input (result, input)
+        result.append (pack_var_int (len (self.outputs)))
+        for value, script in self.outputs:
+            self.pack_output (result, value, script)
+        result.append (pack_u32 (self.lock_time))
+        return ''.join (result)
+
     # unpack1 only exists to capture self.raw during block unpacking
     cdef unpack1 (self, pkt p):
         cdef int pos0 = p.pos
@@ -257,6 +314,9 @@ cdef class TX:
     def unpack (self, bytes data):
         self.raw = data
         return self.unpack0 (pkt (data))
+
+    def pack (self):
+        pass
 
 cdef class BLOCK:
     cdef public uint32_t version
