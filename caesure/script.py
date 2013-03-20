@@ -4,6 +4,10 @@ import hashlib
 import struct
 from pprint import pprint as pp
 
+# status: passes the 'valid' unit tests from bitcoin/bitcoin, but does
+#   not yet fail all the 'invalid' tests. [mostly constraints like op
+#   count, stack size, etc...]
+
 class OPCODES:
     # push value
     OP_0 = 0x00
