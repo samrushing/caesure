@@ -761,12 +761,19 @@ def dns_seed():
     print '...done.'
     return addrs
 
+# trying to verify this roll of the dice...
+# http://blockchain.info/tx/013108d7408718f2df8c0c66fe1eb615020d08b5d9418c4c330ceb792c72f857
 def do_sample_verify():
     db = the_block_db
     b = db.by_num (226670)
-    tx = b.transactions[-1]
-    tx.verify0 (0, 'v\xa9\x14\x06\xf1\xb6py\x1f\x92V\xbf\xfc\x89\x8fGBq\xc2/K\xb9I\x88\xac')
-    tx.verify0 (1, 'v\xa9\x14\r,\x81^:\xca\x96Wei\xaab\xd5\xfd\x06\xad\x11\x16\xa5\xd7\x88\xac')
+    # outputs are from 226670, txn -4
+    tx = b.transactions[-4]
+    # input 0 is from 226670, txn 142, output 0
+    amt, oscript = b.transactions[142].outputs[0]
+    tx.verify0 (0, oscript)
+    # input 1 is from 226589, txn 344, output 1
+    amt, oscript = db.by_num(226589).transactions[344].outputs[1]
+    tx.verify0 (1, oscript)
 
 if __name__ == '__main__':
     if '-t' in sys.argv:
