@@ -624,7 +624,7 @@ class block_db:
         self.blocks = {}
         self.prev = {}
         self.next = {}
-        self.block_num = {}
+        self.block_num = {ZERO_BLOCK: -1}
         self.num_block = {}
         self.last_block = 0
         self.build_block_chain()
@@ -660,14 +660,14 @@ class block_db:
                 file.seek (size-80, 1)
                 prev_block = hexify (prev_block, True)
                 name = hexify (dhash (header), True)
+                bn = 1 + self.block_num[prev_block]
                 self.prev[name] = prev_block
                 self.next.setdefault (prev_block, set()).add (name)
-                i += 1
-                self.block_num[name] = i
-                self.num_block.setdefault (i, set()).add (name)
+                self.block_num[name] = bn
+                self.num_block.setdefault (bn, set()).add (name)
                 self.blocks[name] = pos
-        self.last_block = i
-        print 'last block (%d): %s' % (i, name)
+                self.last_block = max (self.last_block, bn)
+        print 'last block (%d): %r' % (self.last_block, self.num_block[self.last_block])
         file.close()
         print '%.02f secs to load block chain' % (t0.end())
         self.read_only_file = open (BLOCKS_PATH, 'rb')
