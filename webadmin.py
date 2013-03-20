@@ -111,7 +111,6 @@ class handler:
             '&nbsp;&nbsp;<a href="/admin/reload">reload</a>'
             '&nbsp;&nbsp;<a href="/admin/status">status</a>'
             '&nbsp;&nbsp;<a href="/admin/block/">blocks</a>'
-            '&nbsp;&nbsp;<a href="/admin/wallet/">wallet</a>'
             '&nbsp;&nbsp;<a href="/admin/send/">send</a>'
             '&nbsp;&nbsp;<a href="/admin/connect/">connect</a>'
             '&nbsp;&nbsp;<a href="/admin/shutdown/">shutdown</a>'
@@ -119,7 +118,6 @@ class handler:
 
     def cmd_status (self, request, parts):
         db = the_block_db
-        w = the_wallet
         RP = request.push
         RP ('<h3>last block</h3>')
         RP ('hash[es]: %s' % (escape (repr (db.num_block[db.last_block]))))
@@ -133,11 +131,6 @@ class handler:
             except:
                 RP ('<br>dead connection</br>')
         RP ('</table><hr>')
-        RP ('<h3>wallet</h3>')
-        if w is None:
-            RP ('No Wallet')
-        else:
-            RP ('total btc: %s' % (bcrepr (w.total_btc),))
 
     def dump_block (self, request, b, num, name):
         RP = request.push
@@ -200,13 +193,7 @@ class handler:
         RP ('<td><table>')
         for i in range (len (tx.inputs)):
             (outpoint, index), script, sequence = tx.inputs[i]
-            tr_class = ''
-            if the_wallet and the_wallet.outpoints.has_key ((outpoint, index)):
-                tr_class = ' class="minus"'
-            else:
-                col0, col1 = '', ''
-            RP ('<tr%s><td>%3d</td><td>%s:%d</td><td>%s</td></tr>' % (
-                    tr_class,
+            RP ('<tr><td>%3d</td><td>%s:%d</td><td>%s</td></tr>' % (
                     i,
                     shorthex (outpoint),
                     index,
@@ -220,8 +207,6 @@ class handler:
             tr_class = ''
             if kind == 'address':
                 addr = data
-                if the_wallet and the_wallet.addrs.has_key (addr):
-                    tr_class = ' class="plus"'
                 # too noisy, simplify
                 kind = ''
             elif kind == 'pubkey':
@@ -247,35 +232,6 @@ class handler:
         request.push ('<h3>[reloaded]</h3>')
         self.cmd_status (request, parts)
 
-    def cmd_wallet (self, request, parts):
-        RP = request.push
-        w = the_wallet
-        if not w:
-            RP ('<h3>no wallet</h3>')
-        else:
-            if parts == ['wallet', 'newkey']:
-                nk = w.new_key()
-                RP ('<p>New Key: %s</p>' % (nk,))
-            else:
-                addrs = w.value.keys()
-                addrs.sort()
-                sum = 0
-                RP ('<p>%d addrs total</p>' % (len(addrs),))
-                for addr in addrs:
-                    RP ('<dl>')
-                    if len(w.value[addr]):
-                        RP ('<dt>addr: %s</dt>' % (addr,))
-                        for (outpoint, index), value in w.value[addr].iteritems():
-                            RP ('<dd>%s %s:%d</dd>' % (bcrepr (value), outpoint.encode ('hex'), index))
-                            sum += value
-                    RP ('</dl>')
-                RP ('<br>total: %s' % (bcrepr(sum),))
-                RP ('<br>unused keys:')
-                for addr in addrs:
-                    if not len(w.value[addr]):
-                        RP ('<br>%s' % (addr,))
-                RP ('<p><a href="/admin/wallet/newkey">Make a New Key</a></p>')
-
     def match_form (self, qparts, names):
         if len(qparts) != len(names):
             return False
@@ -298,72 +254,9 @@ class handler:
             'IP Address: <input type="text" name="host" value="127.0.0.1"/><br/>'
             '<input type="submit" value="Connect"/></form>')
 
-    def cmd_send (self, request, parts):
-        RP = request.push
-        w = the_wallet
-        if not w:
-            RP ('<h3>no wallet</h3>')
-            return
-        if request.query:
-            qparts = parse_qs (request.query[1:])
-            if self.match_form (qparts, ['amount', 'addr', 'fee']):
-                btc = float_to_btc (float (qparts['amount'][0]))
-                fee = float_to_btc (float (qparts['fee'][0]))
-                addr = qparts['addr'][0]
-                try:
-                    _ = address_to_key (addr) # verify it's a real address
-                except:
-                    RP ('<br><h3>Bad Address: %r</h3>' % escape (addr),)
-                else:
-                    sys.stderr.write ("sending %r btc (fee=%r)\n" % (btc, fee))
-                    tx = w.build_send_request (btc, addr, fee)
-                    RP ('<br>send tx:<br><pre>')
-                    self.dump_tx (request, tx, 0)
-                    self.pending_send.append (tx)
-                    RP ('</pre>')
-            elif self.match_form (qparts, ['cancel', 'index']):
-                index = int (qparts['index'][0])
-                del self.pending_send[index]
-                RP ('<h3>deleted tx #%d</h3>' % (index,))
-            elif self.match_form (qparts, ['confirm', 'index']):
-                index = int (qparts['index'][0])
-                tx = self.pending_send[index]
-                RP ('<h3>sent tx #%d</h3>' % (index,))
-                # send it
-                bc.send (make_packet ('tx', tx.render()))
-                # forget about it
-                # XXX actually, this should be stuffed away somewhere until we see a confirmation,
-                #    and only then forgotten about.
-                del self.pending_send[index]
-            else:
-                RP ('???')
-        RP ('<form>'
-            'Amount to Send: <input type="text" name="amount" /><br/>'
-            'To Address: <input type="text" name="addr" /><br/>'
-            'Fee: <input type="text" name="fee" value="0.0005"><br/>'
-            '<input type="submit" value="Send"/></form>'
-            '<p>Clicking "Send" will queue up the send request, where it can be examined and either confirmed or cancelled</p>'
-            '<p>Note: as currently designed, the bitcoin network may not forward transactions without fees, which could result in bitcoins being "stuck".  Sending tiny amounts (less than 0.01) requires a fee.  This includes the amount left in "change"!</p>'
-            )
-        if not self.pending_send:
-            RP ('<h3>no pending send requests</h3>')
-        else:
-            RP ('<h3>pending send requests</h3>')
-            for i in range (len (self.pending_send)):
-                RP ('<hr>#%d: <br>' % (i,))
-                RP ('<pre>')
-                self.dump_tx (request, self.pending_send[i], i)
-                RP ('</pre>')
-                RP ('<form><input type="hidden" name="index" value="%d">'
-                    '<input type="submit" name="confirm" value="confirm"/>'
-                    '<input type="submit" name="cancel" value="cancel"/>'
-                    '</form>' % (i,))
-
     def cmd_shutdown (self, request, parts):
         request.push ('<h3>Shutting down...</h3>')
         request.done()
-        if the_wallet:
-            the_wallet.write_value_cache()
         coro.sleep_relative (1)
         coro.set_exit()
 
