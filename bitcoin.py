@@ -512,49 +512,6 @@ class block_db:
 class BadState (Exception):
     pass
 
-# we need a way to do command/response on the connection, and we need to do something
-#   to handle asynchronous commands (like continual inv) as well.  So I think we
-#   need a mechanism to identify which things are waiting for responses (hopefully
-#   the protocol makes this easy?).
-#
-# how to distinguish the answer we expected from an async one?  can we do it at the
-#   protocol level?
-#   addr: in response to getaddr: ok this one we can consider to not be command/response?
-#   inv: this one I think we can figure out by checking the answer?
-
-# commands are getblocks, getheaders.  we've never used getheaders, so the only
-#   ACTUAL command is getblocks.  hmmm.. maybe that's why I did this async?
-#
-# so we can make a fifo/cv/etc for managing the getblocks/inv/etc 
-
-# messages:            expect-async?   command    response   response-to
-# 3.1 version                *            X           
-# 3.2 verack                                          X        version
-# 3.3 addr                   X                        X        getaddr
-# 3.4 inv                    X                        X        getblocks
-# 3.5 getdata                                         X        inv
-# 3.6 notfound                                        X        getdata
-# 3.7 getblocks                           X
-# 3.8 getheaders                          X
-# 3.9 tx                                              X        getdata
-# 3.10 block                                          X        getdata
-# 3.11 headers                                        X        getheaders
-# 3.12 getaddr                            X
-
-# for IP transactions (used?)
-# 3.13 checkorder
-# 3.14 submitorder
-# 3.15 reply
-
-# 3.16 ping                  X             
-# 3.18 alert                 X
-
-
-# ignore for now?
-# 3.17 filterload, filteradd, filterclear, merkleblock
-
-# the only totally unsolicited packets we expect are <addr>, <inv>
-
 class dispatcher:
     def __init__ (self):
         self.known = []
