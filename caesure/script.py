@@ -340,15 +340,51 @@ class script_parser:
             last_insn = insn
         return code, None
 
+def unparse_script (p):
+    r = []
+    for insn in p:
+        kind = insn[0]
+        if kind == 'PUSH':
+            _, data = insn
+            r.append (make_push_str (data))
+        elif kind == 'COND':
+            _, sense, sub0, sub1 = insn
+            if sense:
+                op = OP_IF
+            else:
+                op = OP_NOTIF
+            r.append (chr (op))
+            r.append (unparse_script (sub0))
+            if sub1:
+                r.append (chr (OP_ELSE))
+                r.append (unparse_script (sub1))
+            r.append (chr (OP_ENDIF))
+        elif kind == 'CHECK':
+            _, op, _ = insn
+            r.append (chr (op))
+        elif kind == 'OP':
+            _, name, op = insn
+            r.append (chr (op))
+    return ''.join (r)
+
+def remove_codeseps (p):
+    r = []
+    for insn in p:
+        if insn[0] == 'OP' and insn[1] == 'OP_CODESEPARATOR':
+            pass
+        elif insn[0] == 'COND':
+            _, sense, sub0, sub1 = insn
+            sub0 = remove_codeseps (sub0)
+            if sub1:
+                sub1 = remove_codeseps (sub1)
+            r.append (('COND', sense, sub0, sub1))
+        else:
+            r.append (insn)
+    return r
+
 def is_true (v):
     # check against the two forms of ZERO
     return v not in ('', '\x80')
-
-# the wiki says that numeric ops are limited to 32-bit integers,
-#  however at least one of the test cases (which try to enforce this)
-#  seem to violate this:
-# ["2147483647 DUP ADD", "4294967294 EQUAL", ">32 bit EQUAL is valid"],
-# by adding INT32_MAX to itself we overflow a signed 32-bit int.
 
 lo32 = -(2**31)
 hi32 = (2**31)-1
@@ -375,10 +411,16 @@ class machine:
     def push (self, item):
         self.stack.append (item)
 
-    def push_int (self, n, check=True):
-        if check:
-            check_int (n)
+    def push_int (self, n):
         self.stack.append (render_int (n))
+
+    # the wiki says that numeric ops are limited to 32-bit integers,
+    #  however at least one of the test cases (which try to enforce this)
+    #  seem to violate this:
+    # ["2147483647 DUP ADD", "4294967294 EQUAL", ">32 bit EQUAL is valid"],
+    # by adding INT32_MAX to itself we overflow a signed 32-bit int.
+    # NOTE: according to Gavin Andresen, only the input operands have this limitation,
+    #   the output can overflow... a script quirk.
 
     def pop_int (self, check=True):
         n = unrender_int (self.pop())
@@ -406,6 +448,28 @@ class machine:
 
     def truth (self):
         return is_true (self.pop())
+
+# machine with placeholders for things we need to perform tx verification
+
+class verifying_machine (machine):
+
+    def __init__ (self, prev_outscript, tx, index):
+        machine.__init__ (self)
+        self.prev_outscript = prev_outscript
+        self.tx = tx
+        self.index = index
+
+    def check_sig (self, s):
+        pub_key = self.pop()
+        sig = self.pop()
+        s0 = parse_script (s)
+        s0 = remove_codeseps (s0)
+        s0 = unparse_script (s0)
+        hash_type, sig = ord(sig[-1]), sig[:-1]
+        to_hash = self.tx.get_ecdsa_hash0 (self.index, s0, hash_type)
+        vhash = dhash (to_hash)
+        result = self.tx.verify1 (pub_key, sig, vhash)
+        print 'check_sig result=', result
 
 def parse_script (s):
     code, end = script_parser(s).parse()
@@ -718,6 +782,11 @@ for name in g.keys():
         code = opcode_map_fwd[opname]
         op_funs[code] = g[name]
 
+from hashlib import sha256
+
+def dhash (s):
+    return sha256(sha256(s).digest()).digest()
+
 def eval_script (m, s):
     for insn in s:
         #m.dump()
@@ -736,6 +805,12 @@ def eval_script (m, s):
                 eval_script (m, tcode)
             elif fcode is not None:
                 eval_script (m, fcode)
+        elif kind == 'CHECK':
+            _, op, s0 = insn
+            if op == OP_CHECKSIG:
+                m.check_sig (s0)
+            else:
+                raise NotImplementedError
         else:
             raise ValueError ("unknown kind: %r" % (kind,))
     m.dump()
@@ -750,13 +825,13 @@ def do_one (sig, pub):
     pub = parse_script (pub)
     W (('-' *50)+'\n')
     m = machine()
-    eval_script (m, sig)
+    eval_script (None, m, sig)
     m.clear_alt()
-    eval_script (m, pub)
+    eval_script (None, m, pub)
     if not m.truth():
         raise ScriptFailure
 
-def go():
+def unit_tests():
     for v in valid:
         sig, pub = v[:2]
         if len(v)>2:
@@ -775,4 +850,4 @@ def go():
             W ('DID NOT FAIL!\n')
             raw_input()
 
-go()
+#unit_tests()
