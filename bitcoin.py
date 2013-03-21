@@ -9,6 +9,9 @@
 # num->block is 1->N and block->num is 1->1
 #
 
+# next step: keeping track of all outpoints.
+#  consider using leveldb?
+
 import copy
 import hashlib
 import random
@@ -28,7 +31,7 @@ from pprint import pprint as pp
 
 import caesure.proto
 
-from caesure.script import parse_script, eval_script, verifying_machine
+from caesure.script import parse_script, eval_script, verifying_machine, pprint_script
 
 W = coro.write_stderr
 
@@ -38,7 +41,7 @@ BITCOIN_MAGIC = '\xf9\xbe\xb4\xd9'
 BLOCKS_PATH = 'blocks.bin'
 genesis_block_hash = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'
 
-from caesure.proto import base58_encode, base58_decode
+from caesure.proto import base58_encode, base58_decode, hexify
 
 def dhash (s):
     return sha256(sha256(s).digest()).digest()
@@ -56,6 +59,8 @@ def float_to_btc (f):
     return long (round (f * 1e8))
 
 class BadAddress (Exception):
+    pass
+class VerifyError (Exception):
     pass
 
 def key_to_address (s):
@@ -79,13 +84,6 @@ def pkey_to_address (s):
     return base58_encode (
         int ((s + checksum).encode ('hex'), 16)
         )
-
-# for some reason many hashes are reversed, dunno why.  [this may just be block explorer?]
-def hexify (s, flip=False):
-    if flip:
-        return s[::-1].encode ('hex')
-    else:
-        return s.encode ('hex')
 
 def unhexify (s, flip=False):
     if flip:
@@ -136,12 +134,6 @@ NULL_OUTPOINT = ('\x00' * 32, 4294967295)
 
 class TX (caesure.proto.TX):
 
-    ## def __init__ (self, inputs, outputs, lock_time, raw=None):
-    ##     self.inputs = inputs
-    ##     self.outputs = outputs
-    ##     self.lock_time = lock_time
-    ##     self.raw = raw
-
     def copy (self):
         tx0 = TX()
         tx0.version = self.version
@@ -162,33 +154,14 @@ class TX (caesure.proto.TX):
         print '%d outputs' % (len(self.outputs))
         for i in range (len (self.outputs)):
             value, pk_script = self.outputs[i]
-            kind, addr = parse_oscript (pk_script)
-            if not addr:
-                addr = hexify (pk_script)
-            print '%3d %s %s %r' % (i, bcrepr (value), kind, addr)
+            pk_script = pprint_script (parse_script (pk_script))
+            print '%3d %s %r' % (i, bcrepr (value), pk_script)
         print 'lock_time:', self.lock_time
 
     def render (self):
         return self.pack()
 
     # Hugely Helpful: http://forum.bitcoin.org/index.php?topic=2957.20
-    # NOTE: this currently verifies only 'standard' address transactions.
-    def get_ecdsa_hash (self, index):
-        tx0 = self.copy()
-        iscript = tx0.inputs[index][1]
-        # build a new version of the input script as an output script
-        sig, pubkey = parse_iscript (iscript)
-        pubkey_hash = rhash (pubkey)
-        new_script = chr(118) + chr (169) + chr (len (pubkey_hash)) + pubkey_hash + chr (136) + chr (172)
-        for i in range (len (tx0.inputs)):
-            outpoint, script, sequence = tx0.inputs[i]
-            if i == index:
-                script = new_script
-            else:
-                script = ''
-            tx0.inputs[i] = outpoint, script, sequence
-        to_hash = tx0.render() + struct.pack ('<I', 1)
-        return dhash (to_hash), sig, pubkey
 
     def get_ecdsa_hash0 (self, index, sub_script, hash_type):
         tx0 = self.copy()
@@ -201,6 +174,7 @@ class TX (caesure.proto.TX):
             tx0.inputs[i] = outpoint, script, sequence
         return tx0.render() + struct.pack ('<I', hash_type)
 
+    # XXX to be removed
     def sign (self, key, index):
         hash, _, pubkey = self.get_ecdsa_hash (index)
         assert (key.get_pubkey() == pubkey)
@@ -217,13 +191,17 @@ class TX (caesure.proto.TX):
         eval_script (m, parse_script (script))
         m.clear_alt()
         # should terminate with OP_CHECKSIG or its like
-        eval_script (m, parse_script (prev_outscript))
+        r = eval_script (m, parse_script (prev_outscript))
+        if r != 1:
+            raise VerifyError
 
     def verify1 (self, pub_key, sig, vhash):
+        #return pool_verify (pub_key, sig, vhash)
         k = KEY()
         k.set_pubkey (pub_key)
         return k.verify (vhash, sig)
 
+    # XXX to be replaced with the above...
     def verify (self, index):
         outpoint, script, sequence = self.inputs[index]
         if outpoint == NULL_OUTPOINT:
@@ -235,55 +213,6 @@ class TX (caesure.proto.TX):
             k.set_pubkey (pubkey)
             return k.verify (hash, sig)
 
-# both generation and address push two values, so this is good for most things.
-
-# The two numbers pushed by the input script for generation are
-# *usually* a compact representation of the current target, and the
-# 'extraNonce'.  But there doesn't seem to be any requirement for that;
-# the eligius pool uses the string 'Elegius'.
-
-def parse_iscript (s):
-    # these tend to be push, push
-    s0 = ord (s[0])
-    if s0 > 0 and s0 < 76:
-        # specifies the size of the first key
-        k0 = s[1:1+s0]
-        if len(s) == 1+s0:
-            return k0, None
-        else:
-            s1 = ord (s[1+s0])
-            if s1 > 0 and s1 < 76:
-                k1 = s[2+s0:2+s0+s1]
-                return k0, k1
-            else:
-                return None, None
-    else:
-        return None, None
-
-def make_iscript (sig, pubkey):
-    # XXX assert length limits
-    sl = len (sig)
-    kl = len (pubkey)
-    return chr(sl) + sig + chr(kl) + pubkey
-
-def parse_oscript (s):
-    if (ord(s[0]) == 118 and ord(s[1]) == 169 and ord(s[-2]) == 136 and ord(s[-1]) == 172):
-        # standard address output: OP_DUP OP_HASH160 <pubKeyHash> OP_EQUALVERIFY OP_CHECKSIG
-        size = ord(s[2])
-        addr = key_to_address (s[3:size+3])
-        assert (size+5 == len(s))
-        return 'address', addr
-    elif ord(s[0]) == (len(s) - 2) and ord (s[-1]) == 0xac:
-        # generation: <pubkey>, OP_CHECKSIG
-        return 'pubkey', s[1:-1]
-    else:
-        return 'unknown', s
-
-def make_oscript (addr):
-    # standard tx oscript
-    key_hash = address_to_key (addr)
-    return chr(118) + chr(169) + chr(len(key_hash)) + key_hash + chr(136) + chr(172)
-
 def read_ip_addr (s):
     r = socket.inet_ntop (socket.AF_INET6, s)
     if r.startswith ('::ffff:'):
@@ -293,6 +222,7 @@ def read_ip_addr (s):
 
 def pack_ip_addr (addr):
     # only v4 right now
+    # XXX this is probably no longer true, the dns seeds are returning v6 addrs
     return socket.inet_pton (socket.AF_INET6, '::ffff:%s' % (addr,))
 
 def pack_var_int (n):
@@ -393,6 +323,7 @@ class block_db:
     # block can have only one previous block, but may have multiple
     #  next blocks.
     def build_block_chain (self):
+        from caesure.proto import unpack_block_header
         if not os.path.isfile (BLOCKS_PATH):
             open (BLOCKS_PATH, 'wb').write('')
         file = open (BLOCKS_PATH, 'rb')
@@ -411,7 +342,7 @@ class block_db:
                 size, = struct.unpack ('<Q', size)
                 header = file.read (80)
                 (version, prev_block, merkle_root,
-                 timestamp, bits, nonce) = caesure.proto.unpack_block_header (header)
+                 timestamp, bits, nonce) = unpack_block_header (header)
                 # skip the rest of the block
                 file.seek (size-80, 1)
                 prev_block = hexify (prev_block, True)
@@ -775,6 +706,113 @@ def do_sample_verify():
     amt, oscript = db.by_num(226589).transactions[344].outputs[1]
     tx.verify0 (1, oscript)
 
+# chain-walking generators
+
+# these two are mutually recursive.
+# whenever a fork is found, we create a generator for each
+#  sub-chain and 'race' them against each other.  When only
+#  one remains, we return with its name.
+
+def chain_gen (name):
+    "generate a series of 1... for each block in this sub-chain"
+    db = the_block_db
+    while 1:
+        if db.next.has_key (name):
+            names = db.next[name]
+            if len(names) > 1:
+                for x in longest (names):
+                    yield 1
+            else:
+                name = list(names)[0]
+                yield 1
+        else:
+            break
+
+def longest (names):
+    "find the longest of the chains in <names>"
+    gens = [ (name, chain_gen (name)) for name in list (names) ]
+    ng = len (gens)
+    left = ng
+    n = 0
+    while left > 1:
+        for i in range (ng):
+            if gens[i]:
+                name, gen = gens[i]
+                try:
+                    gen.next()
+                except StopIteration:
+                    gens[i] = None
+                    left -= 1
+        n += 1
+    [(name, _)] = [x for x in gens if x is not None]
+    return name, n
+
+# find the 'official' chain starting from the beginning, using
+#  longest() to identify the longer of any subchains.
+#  something that could be fun here... actually make it an 'infinite'
+#  generator - as in it will pause until the next block comes along.
+#
+# XXX consider how to deal with a fork in real time.
+
+def db_gen():
+    db = the_block_db
+    name = genesis_block_hash
+    while 1:
+        yield name
+        if db.next.has_key (name):
+            names = db.next[name]
+            if len(names) == 1:
+                name = list(names)[0]
+            else:
+                name, _ = longest (names)
+        else:
+            break
+
+pack_u64 = caesure.proto.pack_u64
+
+class txmap:
+    def __init__ (self):
+        import leveldb
+        self.monies = leveldb.LevelDB ('monies')
+
+    def store_outputs (self, tx):
+        for i in range (len (tx.outputs)):
+            # inputs are referenced by (txhash,index) so we need to store this into db,
+            #   and only remove it when it has been spent.  so probably we need (txhash,index)->(amt,script)
+            #   alternatively we could store it as an offset,size into the db file... but probably not worth it.
+            amt, pk_script = tx.outputs[i]
+            self.monies.Put ('%s:%d' % (tx.name, i), pack_u64(amt) + pk_script)
+
+    def initialize (self):
+        db = the_block_db
+        n = 0
+        W ('start: %r\n' % (time.ctime(),))
+        for name in db_gen():
+            b = db[name]
+            # assume coinbase is ok for now
+            tx0 = b.transactions[0]
+            self.store_outputs (tx0)
+            for tx in b.transactions[1:]:
+                # verify each transaction
+                # first, we need the output script for each of the inputs
+                for i in range (len (tx.inputs)):
+                    (outpoint, index), script, sequence = tx.inputs[i]
+                    key = '%s:%d' % (hexify (outpoint, True), index)
+                    pair = self.monies.Get (key)
+                    amt, oscript = pair[:8], pair[8:]
+                    amt, = struct.unpack ('<Q', amt)
+                    tx.verify0 (i, oscript)
+                    self.monies.Delete (key)
+                self.store_outputs (tx)
+            n += 1
+            if n % 1000 == 0:
+                W ('.')
+        W ('done: %r\n' % (time.ctime(),))
+
+def build_txmap():
+    tm = txmap()
+    tm.initialize()
+
 if __name__ == '__main__':
     if '-t' in sys.argv:
         BITCOIN_PORT = 18333
@@ -823,3 +861,4 @@ if __name__ == '__main__':
     else:
         # database browsing mode
         db = the_block_db # alias
+        
