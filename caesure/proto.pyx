@@ -127,7 +127,7 @@ cdef class pkt:
         self.pos += 4
         return r
 
-    cdef uint32_t u64 (self):
+    cdef uint64_t u64 (self):
         cdef uint64_t r = 0
         cdef int i
         self.need (8)
@@ -210,10 +210,10 @@ cdef class VERSION:
                 )
             )
 
-cdef bytes pack_u16 (uint16_t n):
+cpdef bytes pack_u16 (uint16_t n):
     return chr(n & 0xff) + chr ((n>>8) &0xff)
 
-cdef bytes pack_u32 (uint32_t n):
+cpdef bytes pack_u32 (uint32_t n):
     cdef int i
     cdef char r[4]
     for i in range (4):
@@ -221,7 +221,7 @@ cdef bytes pack_u32 (uint32_t n):
         n >>= 8
     return r[:4]
 
-cdef bytes pack_u64 (uint64_t n):
+cpdef bytes pack_u64 (uint64_t n):
     cdef int i
     cdef char r[8]
     for i in range (8):
@@ -229,7 +229,7 @@ cdef bytes pack_u64 (uint64_t n):
         n >>= 8
     return r[:8]
 
-cdef bytes pack_var_int (uint64_t n):
+cpdef bytes pack_var_int (uint64_t n):
     if n < 0xfd:
         return chr (<uint8_t>n)
     elif n <= 0xffff:
@@ -244,7 +244,8 @@ cdef class TX:
     cdef public uint32_t lock_time
     cdef public list inputs
     cdef public list outputs
-    cdef public bytes raw
+    cdef readonly bytes raw
+    cdef readonly bytes name
 
     cdef unpack_input (self, pkt p):
         cdef bytes outpoint_hash = p.unpack_str (32)
@@ -310,13 +311,15 @@ cdef class TX:
         self.unpack0 (p)
         pos1 = p.pos
         self.raw = p.data[pos0:pos1]
+        self.name = self.get_name()
 
     def unpack (self, bytes data):
         self.raw = data
+        self.name = self.get_name()
         return self.unpack0 (pkt (data))
 
-    def pack (self):
-        pass
+    def get_name (self):
+        return _flip_hexify (dhash (self.raw))
 
 cdef class BLOCK:
     cdef public uint32_t version
@@ -327,8 +330,8 @@ cdef class BLOCK:
     cdef public uint32_t bits    
     cdef public uint32_t nonce
     cdef public list transactions
-    cdef public bytes raw
-    cdef public bytes name
+    cdef readonly bytes raw
+    cdef readonly bytes name
     
     def make_TX (self):
         return TX()
