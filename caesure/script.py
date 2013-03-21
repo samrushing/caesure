@@ -371,6 +371,33 @@ def unparse_script (p):
             r.append (chr (op))
     return ''.join (r)
 
+def pprint_script (p):
+    r = []
+    for insn in p:
+        kind = insn[0]
+        if kind == 'PUSH':
+            _, data = insn
+            if not data:
+                r.append ('')
+            else:
+                r.append ('0x' + data.encode ('hex'))
+        elif kind == 'COND':
+            _, sense, sub0, sub1 = insn
+            if sense:
+                op = 'IF'
+            else:
+                op = 'NOTIF'
+            r.append ([op] + pprint_script (sub0))
+            if sub1:
+                r.append (['ELSE'] + pprint_script (sub1))
+        elif kind == 'CHECK':
+            _, op, _ = insn
+            r.append (opcode_map_rev[op])
+        elif kind == 'OP':
+            _, name, op = insn
+            r.append (name)
+    return r
+
 def remove_codeseps (p):
     r = []
     for insn in p:
@@ -472,8 +499,7 @@ class verifying_machine (machine):
         hash_type, sig = ord(sig[-1]), sig[:-1]
         to_hash = self.tx.get_ecdsa_hash0 (self.index, s0, hash_type)
         vhash = dhash (to_hash)
-        result = self.tx.verify1 (pub_key, sig, vhash)
-        print 'check_sig result=', result
+        return self.tx.verify1 (pub_key, sig, vhash)
 
 def parse_script (s):
     code, end = script_parser(s).parse()
@@ -795,7 +821,6 @@ def eval_script (m, s):
     for insn in s:
         #m.dump()
         kind = insn[0]
-        print insn
         if kind == 'PUSH':
             _, data = insn
             m.push (data)
@@ -812,12 +837,13 @@ def eval_script (m, s):
         elif kind == 'CHECK':
             _, op, s0 = insn
             if op == OP_CHECKSIG:
-                m.check_sig (s0)
+                return m.check_sig (s0)
             else:
                 raise NotImplementedError
         else:
             raise ValueError ("unknown kind: %r" % (kind,))
-    m.dump()
+    #m.dump()
+    return 0
 
 # see VerifyScript() for details of what we do *after* the scripts run.
 
@@ -854,4 +880,14 @@ def unit_tests():
             W ('DID NOT FAIL!\n')
             raw_input()
 
-#unit_tests()
+def pprint_unit_tests():
+    for v in valid:
+        sig, pub = v[:2]
+        sig0 = parse_script (sig)
+        pub0 = parse_script (pub)
+        W ('%r\n%r\n' % (pprint_script (sig0), pprint_script (pub0)))
+        W ('-----------\n')
+
+if __name__ == '__main__':
+    #unit_tests()
+    pprint_unit_tests()
