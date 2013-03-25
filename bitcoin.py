@@ -31,7 +31,8 @@ from pprint import pprint as pp
 
 import caesure.proto
 
-from caesure.script import parse_script, eval_script, verifying_machine, pprint_script
+from caesure.script import eval_script, verifying_machine, pprint_script
+from caesure._script import parse_script
 
 W = coro.write_stderr
 
@@ -109,6 +110,7 @@ class timer:
 # --------------------------------------------------------------------------------
 
 # pull in one of the ECDSA key implementations.
+# NOTE: as of march 2013, the pure ecdsa verify seems to have a problem. FIXME.
 
 from ecdsa_ssl import KEY
 #from ecdsa_pure import KEY
@@ -150,7 +152,8 @@ class TX (caesure.proto.TX):
         print 'inputs: %d' % (len(self.inputs))
         for i in range (len (self.inputs)):
             (outpoint, index), script, sequence = self.inputs[i]
-            print '%3d %s:%d %s %d' % (i, hexify(outpoint), index, hexify (script), sequence)
+            redeem = pprint_script (parse_script (script))
+            print '%3d %s:%d %r %d' % (i, hexify(outpoint), index, redeem, sequence)
         print '%d outputs' % (len(self.outputs))
         for i in range (len (self.outputs)):
             value, pk_script = self.outputs[i]
@@ -163,7 +166,9 @@ class TX (caesure.proto.TX):
 
     # Hugely Helpful: http://forum.bitcoin.org/index.php?topic=2957.20
 
-    def get_ecdsa_hash0 (self, index, sub_script, hash_type):
+    def get_ecdsa_hash (self, index, sub_script, hash_type):
+        # XXX see script.cpp:SignatureHash() - looks like this is where
+        #   we make mods depending on <hash_type>
         tx0 = self.copy()
         for i in range (len (tx0.inputs)):
             outpoint, script, sequence = tx0.inputs[i]
@@ -188,30 +193,34 @@ class TX (caesure.proto.TX):
     def verify0 (self, index, prev_outscript):
         outpoint, script, sequence = self.inputs[index]
         m = verifying_machine (prev_outscript, self, index)
+        #print 'source script', pprint_script (parse_script (script))
         eval_script (m, parse_script (script))
         m.clear_alt()
         # should terminate with OP_CHECKSIG or its like
+        #print 'redeem script', pprint_script (parse_script (prev_outscript))
         r = eval_script (m, parse_script (prev_outscript))
-        if r != 1:
+        if r is None:
+            # if the script did not end in a CHECKSIG op, we need
+            #   to check the top of the stack (essentially, OP_VERIFY)
+            m.need (1)
+            if not m.truth():
+                raise VerifyError
+        elif r == 1:
+            pass
+        else:
+            # this can happen if r == 0 (verify failed) or r == -1 (openssl error)
             raise VerifyError
 
     def verify1 (self, pub_key, sig, vhash):
-        #return pool_verify (pub_key, sig, vhash)
-        k = KEY()
-        k.set_pubkey (pub_key)
-        return k.verify (vhash, sig)
-
-    # XXX to be replaced with the above...
-    def verify (self, index):
-        outpoint, script, sequence = self.inputs[index]
-        if outpoint == NULL_OUTPOINT:
-            # generation is considered verified - I assume by virtue of its hash value?
+        if building_txmap:
             return 1
         else:
-            hash, sig, pubkey = self.get_ecdsa_hash (index)
             k = KEY()
-            k.set_pubkey (pubkey)
-            return k.verify (hash, sig)
+            #W ('pub_key=%r\n' % (pub_key,))
+            k.set_pubkey (pub_key)
+            r = k.verify (vhash, sig)
+            #print 'ecdsa verify...', r
+            return r
 
 def read_ip_addr (s):
     r = socket.inet_ntop (socket.AF_INET6, s)
@@ -486,7 +495,7 @@ class dispatcher:
                     break
             else:
                 break
-        if not len(self.requested):
+        if (db.last_block < self.target) and not len(self.requested):
             c = get_random_connection()
             c.getblocks()
         
@@ -706,6 +715,29 @@ def do_sample_verify():
     amt, oscript = db.by_num(226589).transactions[344].outputs[1]
     tx.verify0 (1, oscript)
 
+# try to verify the first multisig...
+# http://blockchain.info/tx/eb3b82c0884e3efa6d8b0be55b4915eb20be124c9766245bcc7f34fdac32bccb
+def do_sample_multi0():
+    db = the_block_db
+    b = db.by_num (163685) # tx 13
+    tx = b.transactions[13]
+    if 0:
+        # source 0 is from the same block, tx 11, output 0
+        amt, oscript = b.transactions[11].outputs[0]
+        tx.verify0 (0, oscript)
+    # source 1 is from the same block, tx 11, output 1
+    amt, oscript = b.transactions[11].outputs[1]
+    tx.verify0 (1, oscript)
+
+# 02b038020755f63d45d1c8c7ab495d5d3bbc82113d95fbb964e7f8184e1b27bd
+def do_sample_multi():
+    db = the_block_db
+    b = db.by_num (227878) # tx 139
+    tx = b.transactions[139]
+    # only one source, block 227861, tx 95, output 0
+    amt, oscript = db.by_num (227861).transactions[95].outputs[0]
+    tx.verify0 (0, oscript)
+
 # chain-walking generators
 
 # these two are mutually recursive.
@@ -768,12 +800,24 @@ def db_gen():
         else:
             break
 
+class monies:
+    def __init__ (self):
+        import leveldb
+        self.monies = leveldb.LevelDB ('monies')
+    def __getitem__ (self, key):
+        return self.monies.Get (key)
+    def __setitem__ (self, key, val):
+        self.monies.Put (key, val)
+    def __delitem__ (self, key):
+        self.monites.Delete (key)
+
 pack_u64 = caesure.proto.pack_u64
 
 class txmap:
     def __init__ (self):
         import leveldb
-        self.monies = leveldb.LevelDB ('monies')
+        #self.monies = leveldb.LevelDB ('monies')
+        self.monies = {}
 
     def store_outputs (self, tx):
         for i in range (len (tx.outputs)):
@@ -781,8 +825,9 @@ class txmap:
             #   and only remove it when it has been spent.  so probably we need (txhash,index)->(amt,script)
             #   alternatively we could store it as an offset,size into the db file... but probably not worth it.
             amt, pk_script = tx.outputs[i]
-            self.monies.Put ('%s:%d' % (tx.name, i), pack_u64(amt) + pk_script)
+            self.monies['%s:%d' % (tx.name, i)] = pack_u64(amt) + pk_script
 
+    # failed txn here: https://blockchain.info/block-index/172908
     def initialize (self):
         db = the_block_db
         n = 0
@@ -798,20 +843,43 @@ class txmap:
                 for i in range (len (tx.inputs)):
                     (outpoint, index), script, sequence = tx.inputs[i]
                     key = '%s:%d' % (hexify (outpoint, True), index)
-                    pair = self.monies.Get (key)
+                    pair = self.monies[key]
                     amt, oscript = pair[:8], pair[8:]
                     amt, = struct.unpack ('<Q', amt)
-                    tx.verify0 (i, oscript)
-                    self.monies.Delete (key)
+                    try:
+                        tx.verify0 (i, oscript)
+                    except VerifyError:
+                        W ('failed verification: %r:%d\n' % (tx.name,i))
+                    except NotImplementedError:
+                        W ('not implemented: %r:%d\n' % (tx.name,i))
+                    else:
+                        del self.monies[key]
                 self.store_outputs (tx)
             n += 1
+            #if n == 120000:
+            #    coro.profiler.start()
+            #if n == 130000:
+            #    coro.profiler.stop()
             if n % 1000 == 0:
                 W ('.')
         W ('done: %r\n' % (time.ctime(),))
 
+# difficult to parallelize the verification, because the transactions in a single
+#   block can be dependent on other txns in that same block.  [this must mean that
+#   they are ordered?]
+
+building_txmap = False
+the_txmap = None
+
 def build_txmap():
+    global building_txmap, the_txmap
     tm = txmap()
-    tm.initialize()
+    building_txmap = True
+    try:
+        tm.initialize()
+    finally:
+        building_txmap = False
+    the_txmap = tm
 
 if __name__ == '__main__':
     if '-t' in sys.argv:
@@ -862,3 +930,7 @@ if __name__ == '__main__':
         # database browsing mode
         db = the_block_db # alias
         
+    # this is just so I can use the coro profiler
+    #import coro.profiler
+    #coro.spawn (build_txmap)
+    #coro.event_loop()
