@@ -3,6 +3,12 @@
 import hashlib
 import struct
 from pprint import pprint as pp
+import sys
+
+W = sys.stderr.write
+
+# confusion: I believe 'standard' transactions != 'valid scripts', I think They
+#  have chosen a subset of legal transactions that are considered 'standard'.
 
 # status: passes the 'valid' unit tests from bitcoin/bitcoin, but does
 #   not yet fail all the 'invalid' tests. [mostly constraints like op
@@ -157,14 +163,6 @@ for name in dir(OPCODES):
         opcode_map_fwd[name] = val
         opcode_map_rev[val] = name
 
-# parse the test cases from bitcoin-qt
-import json
-valid   = json.load (open ('/Users/rushing/src/git/bitcoin/src/test/data/script_valid.json', 'rb'))
-invalid = json.load (open ('/Users/rushing/src/git/bitcoin/src/test/data/script_invalid.json', 'rb'))
-
-import re
-digits = re.compile ('-?[0-9]+$')
-
 def render_int (n):
     # little-endian byte stream
     if n < 0:
@@ -209,7 +207,7 @@ def make_push_str (s):
     if ls < OP_PUSHDATA1:
         return chr(ls) + s
     elif ls < 0xff:
-        return chr(OP_PUSHDATA1) + chr(ls) + ns
+        return chr(OP_PUSHDATA1) + chr(ls) + s
     elif ls < 0xffff:
         return chr(OP_PUSHDATA2) + struct.pack ("<H", ls) + s
     else:
@@ -223,32 +221,7 @@ def make_push_int (n):
     elif n >= 2 and n <= 16:
         return chr(80+n)
     else:
-        ns = render_int (n)
         return make_push_str (render_int (n))
-
-def parse_test (s):
-    s = bytes(s)
-    r = []
-    for e in s.split():
-        if digits.match (e):
-            # push this integer
-            r.append (make_push_int (int (e)))
-        elif e.startswith ('0x'):
-            # what does this mean? "Raw hex data, inserted NOT pushed onto stack:"
-            r.append (e[2:].decode ('hex'))
-        elif len(e) >= 2 and e[0] == "'" and e[-1] == "'":
-            # these actually are *pushed*, usually with PUSHDATA{1,2,4}
-            r.append (make_push_str (e[1:-1]))
-        elif opcode_map_fwd.has_key (e):
-            r.append (chr(opcode_map_fwd[e]))
-        elif opcode_map_fwd.has_key ('OP_'+e):
-            r.append (chr(opcode_map_fwd['OP_'+e]))
-        else:
-            raise ValueError ("i'm so conFUSEd")
-    return ''.join (r)
-
-valid   = [(parse_test(x[0]), parse_test(x[1]), x[2:]) for x in valid if len(x) >= 2]
-invalid = [(parse_test(x[0]), parse_test(x[1]), x[2:]) for x in invalid if len(x) >= 2]
 
 class ScriptError (Exception):
     pass
@@ -303,16 +276,14 @@ class script_parser:
         while self.pos < self.length:
             insn = self.next()
             if insn >= 0 and insn <= 75:
-                code.append (('PUSH', self.get_str (insn)))
+                code.append ((KIND_PUSH, self.get_str (insn)))
             elif insn == OP_PUSHDATA1:
                 size = self.next()
-                code.append (('PUSH', self.get_str (size)))
+                code.append ((KIND_PUSH, self.get_str (size)))
             elif insn == OP_PUSHDATA2:
-                code.append (('PUSH', self.get_str (self.get_int (2))))
+                code.append ((KIND_PUSH, self.get_str (self.get_int (2))))
             elif insn == OP_PUSHDATA4:
-                code.append (('PUSH', self.get_str (self.get_int (4))))
-            elif 81 <= insn <= 96:
-                code.append (('PUSH', render_int (insn - 80)))
+                code.append ((KIND_PUSH, self.get_str (self.get_int (4))))
             elif insn in (OP_IF, OP_NOTIF):
                 sub0, end0 = self.parse()
                 sense = insn == OP_IF
@@ -320,27 +291,27 @@ class script_parser:
                     sub1, end1 = self.parse()
                     if end1 != OP_ENDIF:
                         raise BadScript (self.pos)
-                    code.append (('COND', sense, sub0, sub1))
+                    code.append ((KIND_COND, sense, sub0, sub1))
                 elif end0 != OP_ENDIF:
                     raise BadScript (self.pos)
                 else:
-                    code.append (('COND', sense, sub0, None))
+                    code.append ((KIND_COND, sense, sub0, None))
             elif insn in (OP_ELSE, OP_ENDIF):
                 return code, insn
             elif insn == OP_CODESEPARATOR:
                 code_sep = self.pos
             elif insn in (OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_CHECKMULTISIG, OP_CHECKMULTISIGVERIFY):
-                #code.append (('CHECK', insn, self.s[code_sep:self.pos]))
+                #code.append ((KIND_CHECK, insn, self.s[code_sep:self.pos]))
                 # XXX goes to the end of the script, not stopping at this position.
-                code.append (('CHECK', insn, self.s[code_sep:]))
+                code.append ((KIND_CHECK, insn, self.s[code_sep:]))
             elif insn in (OP_VERIF, OP_VERNOTIF):
                 raise BadScript (self.pos)
             else:
                 if insn in disabled:
                     raise DisabledError (self.pos)
                 else:
-                    insn_name = opcode_map_rev.get (insn, insn)
-                    code.append (('OP', insn_name, insn))
+                    #insn_name = opcode_map_rev.get (insn, insn)
+                    code.append ((KIND_OP, insn))
             last_insn = insn
         return code, None
 
@@ -348,10 +319,10 @@ def unparse_script (p):
     r = []
     for insn in p:
         kind = insn[0]
-        if kind == 'PUSH':
+        if kind == KIND_PUSH:
             _, data = insn
             r.append (make_push_str (data))
-        elif kind == 'COND':
+        elif kind == KIND_COND:
             _, sense, sub0, sub1 = insn
             if sense:
                 op = OP_IF
@@ -363,25 +334,30 @@ def unparse_script (p):
                 r.append (chr (OP_ELSE))
                 r.append (unparse_script (sub1))
             r.append (chr (OP_ENDIF))
-        elif kind == 'CHECK':
+        elif kind == KIND_CHECK:
             _, op, _ = insn
             r.append (chr (op))
-        elif kind == 'OP':
-            _, name, op = insn
+        elif kind == KIND_OP:
+            _, op = insn
             r.append (chr (op))
     return ''.join (r)
+
+KIND_PUSH  = 0
+KIND_COND  = 1
+KIND_OP    = 2
+KIND_CHECK = 3
 
 def pprint_script (p):
     r = []
     for insn in p:
         kind = insn[0]
-        if kind == 'PUSH':
+        if kind == KIND_PUSH:
             _, data = insn
             if not data:
                 r.append ('')
             else:
                 r.append ('0x' + data.encode ('hex'))
-        elif kind == 'COND':
+        elif kind == KIND_COND:
             _, sense, sub0, sub1 = insn
             if sense:
                 op = 'IF'
@@ -390,25 +366,25 @@ def pprint_script (p):
             r.append ([op] + pprint_script (sub0))
             if sub1:
                 r.append (['ELSE'] + pprint_script (sub1))
-        elif kind == 'CHECK':
+        elif kind == KIND_CHECK:
             _, op, _ = insn
             r.append (opcode_map_rev[op])
-        elif kind == 'OP':
-            _, name, op = insn
-            r.append (name)
+        elif kind == KIND_OP:
+            _, op = insn
+            r.append (opcode_map_rev.get (op, 'OP_INVALID_%x' % (op,)))
     return r
 
 def remove_codeseps (p):
     r = []
     for insn in p:
-        if insn[0] == 'OP' and insn[1] == 'OP_CODESEPARATOR':
+        if insn[0] == KIND_OP and insn[1] == 'OP_CODESEPARATOR':
             pass
-        elif insn[0] == 'COND':
+        elif insn[0] == KIND_COND:
             _, sense, sub0, sub1 = insn
             sub0 = remove_codeseps (sub0)
             if sub1:
                 sub1 = remove_codeseps (sub1)
-            r.append (('COND', sense, sub0, sub1))
+            r.append ((KIND_COND, sense, sub0, sub1))
         else:
             r.append (insn)
     return r
@@ -494,17 +470,63 @@ class verifying_machine (machine):
         pub_key = self.pop()
         sig = self.pop()
         s0 = parse_script (s)
-        s0 = remove_codeseps (s0)
-        s0 = unparse_script (s0)
-        hash_type, sig = ord(sig[-1]), sig[:-1]
-        to_hash = self.tx.get_ecdsa_hash0 (self.index, s0, hash_type)
+        s1 = remove_codeseps (s0)
+        s2 = remove_sigs (s1, [sig]) # rare?
+        s3 = unparse_script (s2)
+        return self.check_one_sig (pub_key, sig, s3)
+
+    def check_one_sig (self, pub, sig, s):
+        sig, hash_type = sig[:-1], ord(sig[-1])
+        if hash_type != 1:
+            W ('hash_type=%d\n' % (hash_type,))
+            raise NotImplementedError
+        to_hash = self.tx.get_ecdsa_hash (self.index, s, hash_type)
         vhash = dhash (to_hash)
-        return self.tx.verify1 (pub_key, sig, vhash)
+        return self.tx.verify1 (pub, sig, vhash)
+
+    # having trouble understanding if there is a difference between: CHECKMULTISIG and P2SH.
+    # https://en.bitcoin.it/wiki/BIP_0016
+    def check_multi_sig (self, s):
+        npub = self.pop_int()
+        #print 'npub=', npub
+        pubs = [self.pop() for x in range (npub)]
+        nsig = self.pop_int()
+        #print 'nsig=', nsig
+        sigs = [self.pop() for x in range (nsig)]
+        
+        s0 = parse_script (s)
+        s1 = remove_codeseps (s0)
+        s2 = remove_sigs (s1, sigs) # rare?
+        s3 = unparse_script (s2)
+        
+        for sig in sigs:
+            nmatch = 0
+            #print 'checking sig...'
+            for pub in pubs:
+                if self.check_one_sig (pub, sig, s3):
+                    nmatch += 1
+            if nmatch == 0:
+                #print 'sig matched no pubs'
+                return 0
+        return 1
+
+def remove_sigs (p, sigs):
+    "remove any of <sigs> from <p>"
+    r = []
+    for insn in p:
+        kind = insn[0]
+        if kind == KIND_PUSH and insn[1] in sigs:
+            pass
+        else:
+            r.append (insn)
+    return r
 
 def parse_script (s):
     code, end = script_parser(s).parse()
     assert (end is None)
     return code
+
+from caesure._script import parse_script, unparse_script
 
 def do_equal (m):
     m.need(2)
@@ -797,6 +819,40 @@ do_nop8 = do_nop1
 do_nop9 = do_nop1
 do_nop10 = do_nop1
     
+# these will probably be done inline when the eval engine is moved into cython
+def do_1 (m):
+    m.push_int (1)
+def do_2 (m):
+    m.push_int (2)
+def do_3 (m):
+    m.push_int (3)
+def do_4 (m):
+    m.push_int (4)
+def do_5 (m):
+    m.push_int (5)
+def do_6 (m):
+    m.push_int (6)
+def do_7 (m):
+    m.push_int (7)
+def do_8 (m):
+    m.push_int (8)
+def do_9 (m):
+    m.push_int (9)
+def do_10 (m):
+    m.push_int (10)
+def do_11 (m):
+    m.push_int (11)
+def do_12 (m):
+    m.push_int (12)
+def do_13 (m):
+    m.push_int (13)
+def do_14 (m):
+    m.push_int (14)
+def do_15 (m):
+    m.push_int (15)
+def do_16 (m):
+    m.push_int (16)
+
 # The disabled opcodes are in a test near the top of EvalScript in script.cpp.
 # The unit tests require that these fail.
 disabled = set ([
@@ -817,77 +873,56 @@ from hashlib import sha256
 def dhash (s):
     return sha256(sha256(s).digest()).digest()
 
+def pinsn (insn):
+    kind = insn[0]
+    if kind == KIND_PUSH:
+        print 'push %r' % (insn[1])
+    elif kind == KIND_OP:
+        _, op = insn
+        print '%s' % (opcode_map_rev.get (op, str(op)))
+    elif kind == KIND_COND:
+        if insn[1]:
+            print 'IF'
+        else:
+            print 'NOTIF'
+    elif kind == KIND_CHECK:
+        op = insn[1]
+        print '%s' % (opcode_map_rev.get (op, str(op)))
+
 def eval_script (m, s):
     for insn in s:
+        #print '---------------'
         #m.dump()
+        #pinsn (insn)
         kind = insn[0]
-        if kind == 'PUSH':
+        if kind == KIND_PUSH:
             _, data = insn
             m.push (data)
-        elif kind == 'OP':
-            _, opname, op = insn
+        elif kind == KIND_OP:
+            _, op = insn
             op_funs[op](m)
-        elif kind == 'COND':
+        elif kind == KIND_COND:
             _, sense, tcode, fcode = insn
             truth = m.truth()
             if (sense and truth) or (not sense and not truth):
                 eval_script (m, tcode)
             elif fcode is not None:
                 eval_script (m, fcode)
-        elif kind == 'CHECK':
+        elif kind == KIND_CHECK:
             _, op, s0 = insn
-            if op == OP_CHECKSIG:
-                return m.check_sig (s0)
+            if op in (OP_CHECKSIG, OP_CHECKSIGVERIFY):
+                result = m.check_sig (s0)
+                if op == OP_CHECKSIGVERIFY:
+                    do_verify (m)
+                return result
+            elif op in (OP_CHECKMULTISIG, OP_CHECKMULTISIGVERIFY):
+                result = m.check_multi_sig (s0)
+                if op == OP_CHECKMULTISIGVERIFY:
+                    do_verify (m)
+                return result
             else:
                 raise NotImplementedError
         else:
             raise ValueError ("unknown kind: %r" % (kind,))
-    #m.dump()
-    return 0
-
-# see VerifyScript() for details of what we do *after* the scripts run.
-
-import sys
-W = sys.stderr.write
-
-def do_one (sig, pub):
-    sig = parse_script (sig)
-    pub = parse_script (pub)
-    W (('-' *50)+'\n')
-    m = machine()
-    eval_script (None, m, sig)
-    m.clear_alt()
-    eval_script (None, m, pub)
-    if not m.truth():
-        raise ScriptFailure
-
-def unit_tests():
-    for v in valid:
-        sig, pub = v[:2]
-        if len(v)>2:
-            print v[2]
-        do_one (sig, pub)
-    W ('--- SHOULD FAIL ---\n')
-    for v in invalid:
-        sig, pub = v[:2]
-        if len(v)>2:
-            print v[2]
-        try:
-            do_one (sig, pub)
-        except:
-            print sys.exc_info()
-        else:
-            W ('DID NOT FAIL!\n')
-            raw_input()
-
-def pprint_unit_tests():
-    for v in valid:
-        sig, pub = v[:2]
-        sig0 = parse_script (sig)
-        pub0 = parse_script (pub)
-        W ('%r\n%r\n' % (pprint_script (sig0), pprint_script (pub0)))
-        W ('-----------\n')
-
-if __name__ == '__main__':
-    #unit_tests()
-    pprint_unit_tests()
+    # notify the caller when the script does *not* end in a CHECKSIG operation.
+    return None
