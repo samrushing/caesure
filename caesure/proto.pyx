@@ -294,12 +294,16 @@ cdef class TX:
         self.lock_time = p.u32()
             
     def pack (self):
-        cdef list result = [pack_u32 (self.version)]
-        result.append (pack_var_int (len (self.inputs)))
+        cdef int i
+        cdef list result = [
+            pack_u32 (self.version),
+            pack_var_int (len (self.inputs))
+            ]
         for input in self.inputs:
             self.pack_input (result, input)
         result.append (pack_var_int (len (self.outputs)))
-        for value, script in self.outputs:
+        for i in range (len (self.outputs)):
+            value, script = self.outputs[i]
             self.pack_output (result, value, script)
         result.append (pack_u32 (self.lock_time))
         return ''.join (result)
