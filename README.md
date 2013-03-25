@@ -30,7 +30,15 @@ allows bsd, darwin/osx, & linux.
 In addition to the port to shrapnel, some performance-sensitive code is being moved
 to cython, including packet codec, b58, hexify, etc...
 
-I'm attempting to make this a full node, with tx verification etc.... script engine on the way.
+I'm attempting to make this a full node, with tx verification etc....
+
+Script engine is mostly done.  Needs some work on failing constraints
+like stack size, sig count, etc.
+
+For the outpoint database, I'm playing with leveldb.  While verifying
+the entire blockchain, it seems to perform well at first, but then
+disk i/o becomes a serious bottleneck.  For now I'm building the
+outpoint db in memory.
 
 
 usage
