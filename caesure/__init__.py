@@ -1,1 +1,2 @@
 # -*- Mode: Python -*-
+import script
