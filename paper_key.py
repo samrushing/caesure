@@ -1,34 +1,54 @@
 # -*- Mode: Python -*-
 
-# standalone paper wallet generator
+# standalone, self-contained paper wallet generator
+import ctypes
+import ctypes.util
 import sys
-
 import hashlib
 from hashlib import sha256
 
-# either of these will work
-from ecdsa_ssl import KEY
-#from ecdsa_pure import KEY
+ssl = ctypes.cdll.LoadLibrary (ctypes.util.find_library ('ssl'))
 
-try:
-    from coro.asn1.ber import decode
-    def get_keys (der):
-        d = decode (der)
-        pri = d[0][1]
-        pub = d[0][3][2][0][1][1]
-        return pri, pub
-except ImportError:
-    from pyasn1.codec.ber.decoder import decode
-    def unbin (bits):
-        r = []
-        for i in range (0, len (bits), 8):
-            r.append (chr (int (''.join ([str(x) for x in bits[i:i+8]]), 2)))
-        return ''.join (r)
-    def get_keys (der):
-        d = decode (der)
-        pri = bytes (d[0][1])
-        pub = unbin (d[0][3]._value)
-        return pri, pub
+# this specifies the curve used with ECDSA.
+NID_secp256k1 = 714 # from openssl/obj_mac.h
+
+# Thx to Sam Devlin for the ctypes magic 64-bit fix.
+def check_result (val, func, args):
+    if val == 0:
+        raise ValueError
+    else:
+        return ctypes.c_void_p (val)
+
+ssl.EC_KEY_new_by_curve_name.restype = ctypes.c_void_p
+ssl.EC_KEY_new_by_curve_name.errcheck = check_result
+ssl.EC_KEY_get0_private_key.restype = ctypes.c_void_p
+ssl.EC_KEY_get0_private_key.errcheck = check_result
+ssl.BN_bn2hex.restype = ctypes.c_char_p
+
+class KEY:
+
+    def __init__ (self):
+        self.k = ssl.EC_KEY_new_by_curve_name (NID_secp256k1)
+
+    def __del__ (self):
+        ssl.EC_KEY_free (self.k)
+        self.k = None
+
+    def generate (self):
+        return ssl.EC_KEY_generate_key (self.k)
+
+    def get_privkey_bignum (self):
+        pk = ssl.EC_KEY_get0_private_key (self.k)
+        return ssl.BN_bn2hex (pk).decode ('hex')
+
+    def get_pubkey_bignum (self):
+        size = ssl.i2o_ECPublicKey (self.k, 0)
+        if size == 0:
+            raise SystemError
+        else:
+            mb = ctypes.create_string_buffer (size)
+            ssl.i2o_ECPublicKey (self.k, ctypes.byref (ctypes.pointer (mb)))
+            return mb.raw
 
 b58_digits = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
@@ -77,6 +97,10 @@ if __name__ == '__main__':
     for i in range (nkeys):
         k = KEY()
         k.generate()
-        pri, pub = get_keys (k.get_privkey())
+        pri = k.get_privkey_bignum()
+        pub = k.get_pubkey_bignum()
         print 'private:', pkey_to_address (pri)
         print 'public:', key_to_address (rhash (pub))
+        k = None
+
+        
