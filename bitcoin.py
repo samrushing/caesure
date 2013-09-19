@@ -363,7 +363,8 @@ class block_db:
                 self.num_block.setdefault (bn, set()).add (name)
                 self.blocks[name] = pos
                 self.last_block = max (self.last_block, bn)
-        print 'last block (%d): %r' % (self.last_block, self.num_block[self.last_block])
+        if name != ZERO_BLOCK
+            print 'last block (%d): %r' % (self.last_block, self.num_block[self.last_block])
         file.close()
         print '%.02f secs to load block chain' % (t0.end())
         self.read_only_file = open (BLOCKS_PATH, 'rb')
