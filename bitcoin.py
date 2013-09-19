@@ -21,7 +21,6 @@ import time
 import os
 import pickle
 import string
-import sys
 
 import coro
 import coro.read_stream
@@ -41,6 +40,9 @@ BITCOIN_PORT = 8333
 BITCOIN_MAGIC = '\xf9\xbe\xb4\xd9'
 BLOCKS_PATH = 'blocks.bin'
 genesis_block_hash = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'
+
+# overridden by commandline argument
+MY_PORT = BITCOIN_PORT
 
 from caesure.proto import base58_encode, base58_decode, hexify
 
@@ -555,7 +557,7 @@ class base_connection:
     def send_version (self):
         data = struct.pack ('<IQQ', self.version, 1, int(time.time()))
         data += pack_net_addr ((1, (self.addr, self.port)))
-        data += pack_net_addr ((1, (my_addr, BITCOIN_PORT)))
+        data += pack_net_addr ((1, (my_addr, MY_PORT)))
         data += struct.pack ('<Q', self.nonce)
         data += pack_var_str ('/caesure:20130306/')
         start_height = the_block_db.last_block
@@ -883,7 +885,19 @@ def build_txmap():
     the_txmap = tm
 
 if __name__ == '__main__':
-    if '-t' in sys.argv:
+    import argparse
+    p = argparse.ArgumentParser(description='Caesure: a python bitcoin server/node')
+    p.add_argument('-t', '--testnet', action='store_true', help='use Bitcoin testnet')
+    p.add_argument('-m', '--monitor', action='store_true', help='run the monitor on /tmp/caesure.bd')
+    p.add_argument('-a', '--webadmin', action='store_true', help='run the web admin interface at http://localhost:8380/admin/')
+    # We don't listen for connections yet, so no need for this just now
+    #p.add_argument('-p', '--port', nargs=1, type=int, help='local TCP port (default: 8333 or 18333 for testnet)')
+    g = p.add_mutually_exclusive_group()
+    g.add_argument('-c', '--client', nargs=2, help='run as a client of SERVERADDRESS', metavar=('MYADDRESS', 'SERVERADDRESS'))
+    g.add_argument('-n', '--network', nargs=1, help='run in network mode at MYADDRESS', metavar='MYADDRESS')
+    args = p.parse_args()
+
+    if args.testnet:
         BITCOIN_PORT = 18333
         BITCOIN_MAGIC = '\xfa\xbf\xb5\xda'
         BLOCKS_PATH = 'blocks.testnet.bin'
@@ -894,24 +908,25 @@ if __name__ == '__main__':
     the_dispatcher = dispatcher()
     network = False
 
+    #if args.port is not None:
+    #    MY_PORT = args.port[0]
+
     # client mode
-    if '-c' in sys.argv:
-        i = sys.argv.index ('-c')
-        [my_addr, other_addr] = sys.argv[i+1:i+3]
+    if args.client is not None:
+        [my_addr, other_addr] = args.client
         bc = connection (other_addr)
         network = True
 
     # network mode
-    if '-n' in sys.argv:
-        i = sys.argv.index ('-n')
-        my_addr = sys.argv[i+1]
+    if args.network is not None:
+        my_addr = args.network[0]
         addrs = dns_seed()
         for addr in addrs:
             connection (addr)
         network = True
 
-    do_monitor = '-m' in sys.argv
-    do_admin   = '-a' in sys.argv
+    do_monitor = args.monitor
+    do_admin   = args.webadmin
 
     if network:
         if do_monitor:
