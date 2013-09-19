@@ -202,7 +202,7 @@ class handler:
         RP ('</table></td><td><table>')
         for i in range (len (tx.outputs)):
             value, pk_script = tx.outputs[i]
-            kind, data = parse_oscript (pk_script)
+            kind, data = parse_script (pk_script)
             col0, col1 = '', ''
             tr_class = ''
             if kind == 'address':
