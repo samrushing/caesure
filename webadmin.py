@@ -126,7 +126,7 @@ class handler:
         RP ('<table><thead><tr><th>packets</th><th>address</th><tr></thead>')
         for conn in the_connection_list:
             try:
-                addr, port = conn.getpeername()
+                addr, port = conn.conn.getpeername()
                 RP ('<tr><td>%d</td><td>%s:%d</td></tr>' % (conn.packet_count, addr, port))
             except:
                 RP ('<br>dead connection</br>')
