@@ -85,7 +85,7 @@ class handler:
             method = getattr (self, method_name)
             request.push (
                 '\r\n'.join ([
-                        '<html><head>',
+                        '<!DOCTYPE HTML><html><head><meta charset="UTF-8"><title>Caesure admin</title>',
                         css,
                         '</head><body>',
                         '<h1>caesure admin</h1>',
@@ -97,7 +97,7 @@ class handler:
             except SystemExit:
                 raise
             except:
-                request.push ('<h1>something went wrong</h1>')
+                request.push ('<strong>something went wrong</strong><br><br>')
                 request.push ('<pre>%r</pre>' % (coro.compact_traceback(),))
             request.push ('<hr>')
             self.menu (request)
@@ -142,8 +142,8 @@ class handler:
             '<br>time: %s (%s)' % (b.timestamp, time.ctime (b.timestamp)),
             '<br>bits: %s' % (b.bits,),
             '<br>nonce: %s' % (b.nonce,),
-            '<br><a href="http://blockexplorer.com/b/%d">block explorer</a>' % (num,),
-            '<br><a href="http://blockchain.info/block/%s">blockchain.info</a>' % (name,),
+            '<br><a href="https://blockexplorer.com/b/%d">block explorer</a>' % (num,),
+            '<br><a href="https://blockchain.info/block/%s">blockchain.info</a>' % (name,),
         ]))
         #RP ('<pre>%d transactions\r\n' % len(b.transactions))
         RP ('<table><thead><tr><th>num</th><th>ID</th><th>inputs</th><th>outputs</th></tr></thead>')
@@ -212,6 +212,7 @@ class handler:
             elif kind == 'pubkey':
                 addr = key_to_address (rhash (data))
             else:
+                kind = escape (repr (kind))
                 addr = hexify (pk_script)
             RP ('<tr%s><td>%s</td><td>%s %s</td></tr>' % (tr_class, bcrepr (value), kind, addr))
         # lock time seems to always be zero
