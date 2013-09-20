@@ -57,7 +57,9 @@ from another terminal:
 
     $ telnet /tmp/caesure.bd
 
-[telnet to a unix sock is bsd only, try netcat on linux or bind to 127.0.0.1]
+telnet to a unix sock is bsd only, on linux try:
+
+    $ nc -CU /tmp/caesure.bd
 
 you'll get a python prompt:
 

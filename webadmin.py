@@ -63,6 +63,16 @@ def shorten (s, w=20):
 def shorthex (s):
     return shorten (hexify (s))
 
+# 20 Sep 2013 - recovered from https://github.com/runeksvendsen/brutus/blob/master/bitcoin.py
+def parse_oscript (s):
+    if (ord(s[0]) == 118 and ord(s[1]) == 169 and ord(s[-2]) == 136 and ord(s[-1]) == 172):
+        size = ord(s[2])
+        addr = key_to_address (s[3:size+3])
+        assert (size+5 == len(s))
+        return addr
+    else:
+        return None
+
 class handler:
 
     def __init__ (self):
@@ -202,7 +212,11 @@ class handler:
         RP ('</table></td><td><table>')
         for i in range (len (tx.outputs)):
             value, pk_script = tx.outputs[i]
-            kind, data = parse_script (pk_script)
+            try:
+                kind, data = parse_script (pk_script)
+            except:
+                kind = 'address'
+                data = parse_oscript (pk_script)
             col0, col1 = '', ''
             tr_class = ''
             if kind == 'address':
