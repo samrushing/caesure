@@ -63,6 +63,16 @@ def shorten (s, w=20):
 def shorthex (s):
     return shorten (hexify (s))
 
+# 20 Sep 2013 - recovered from https://github.com/runeksvendsen/brutus/blob/master/bitcoin.py
+def parse_oscript (s):
+    if (ord(s[0]) == 118 and ord(s[1]) == 169 and ord(s[-2]) == 136 and ord(s[-1]) == 172):
+        size = ord(s[2])
+        addr = key_to_address (s[3:size+3])
+        assert (size+5 == len(s))
+        return addr
+    else:
+        return None
+
 class handler:
 
     def __init__ (self):
@@ -85,7 +95,7 @@ class handler:
             method = getattr (self, method_name)
             request.push (
                 '\r\n'.join ([
-                        '<html><head>',
+                        '<!DOCTYPE HTML><html><head><meta charset="UTF-8"><title>Caesure admin</title>',
                         css,
                         '</head><body>',
                         '<h1>caesure admin</h1>',
@@ -97,7 +107,7 @@ class handler:
             except SystemExit:
                 raise
             except:
-                request.push ('<h1>something went wrong</h1>')
+                request.push ('<strong>something went wrong</strong><br><br>')
                 request.push ('<pre>%r</pre>' % (coro.compact_traceback(),))
             request.push ('<hr>')
             self.menu (request)
@@ -126,7 +136,7 @@ class handler:
         RP ('<table><thead><tr><th>packets</th><th>address</th><tr></thead>')
         for conn in the_connection_list:
             try:
-                addr, port = conn.getpeername()
+                addr, port = conn.conn.getpeername()
                 RP ('<tr><td>%d</td><td>%s:%d</td></tr>' % (conn.packet_count, addr, port))
             except:
                 RP ('<br>dead connection</br>')
@@ -142,8 +152,8 @@ class handler:
             '<br>time: %s (%s)' % (b.timestamp, time.ctime (b.timestamp)),
             '<br>bits: %s' % (b.bits,),
             '<br>nonce: %s' % (b.nonce,),
-            '<br><a href="http://blockexplorer.com/b/%d">block explorer</a>' % (num,),
-            '<br><a href="http://blockchain.info/block/%s">blockchain.info</a>' % (name,),
+            '<br><a href="https://blockexplorer.com/b/%d">block explorer</a>' % (num,),
+            '<br><a href="https://blockchain.info/block/%s">blockchain.info</a>' % (name,),
         ]))
         #RP ('<pre>%d transactions\r\n' % len(b.transactions))
         RP ('<table><thead><tr><th>num</th><th>ID</th><th>inputs</th><th>outputs</th></tr></thead>')
@@ -202,7 +212,11 @@ class handler:
         RP ('</table></td><td><table>')
         for i in range (len (tx.outputs)):
             value, pk_script = tx.outputs[i]
-            kind, data = parse_oscript (pk_script)
+            try:
+                kind, data = parse_script (pk_script)
+            except:
+                kind = 'address'
+                data = parse_oscript (pk_script)
             col0, col1 = '', ''
             tr_class = ''
             if kind == 'address':
@@ -212,6 +226,7 @@ class handler:
             elif kind == 'pubkey':
                 addr = key_to_address (rhash (data))
             else:
+                kind = escape (repr (kind))
                 addr = hexify (pk_script)
             RP ('<tr%s><td>%s</td><td>%s %s</td></tr>' % (tr_class, bcrepr (value), kind, addr))
         # lock time seems to always be zero
