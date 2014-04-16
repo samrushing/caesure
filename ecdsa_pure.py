@@ -1,5 +1,7 @@
 # -*- Mode: Python -*-
 
+# Note: The ecsa module now supports secp256k1 natively, so this module needs to be redone.
+
 # If you can't (or don't want to) use the ctypes ssl code, this drop-in
 #   replacement uses the pure-python ecdsa package.  Note: it stores private keys
 #   using an OID to indicate the curve, while openssl puts the curve parameters
