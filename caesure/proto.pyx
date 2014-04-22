@@ -233,11 +233,11 @@ cpdef bytes pack_var_int (uint64_t n):
     if n < 0xfd:
         return chr (<uint8_t>n)
     elif n <= 0xffff:
-        return '\xfd' + pack_u16 (<uint16_t>n)
+        return b'\xfd' + pack_u16 (<uint16_t>n)
     elif n <= 0xffffffff:
-        return '\xfe' + pack_u32 (<uint32_t>n)
+        return b'\xfe' + pack_u32 (<uint32_t>n)
     else:
-        return '\xff' + pack_u64 (n)
+        return b'\xff' + pack_u64 (n)
 
 cdef class TX:
     cdef public uint32_t version
