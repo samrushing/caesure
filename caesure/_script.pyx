@@ -151,14 +151,16 @@ cdef class script_parser:
         self.length = len (script)
 
     cdef need (self, uint32_t n):
-        if self.pos + n > self.length:
+        if n > self.length:
+            raise ScriptUnderflow
+        elif self.pos + n > self.length:
             raise ScriptUnderflow
 
-    cdef uint8_t peek (self):
+    cdef uint8_t peek (self) except? -1:
         self.need (1)
         return self.p[self.pos]
 
-    cdef uint8_t next (self):
+    cdef uint8_t next (self) except? -1:
         cdef uint8_t r
         self.need (1)
         r = self.p[self.pos]
@@ -172,7 +174,7 @@ cdef class script_parser:
         self.pos += n
         return result
 
-    cdef uint32_t get_int (self, uint32_t count):
+    cdef uint32_t get_int (self, uint32_t count) except? -1:
         cdef uint32_t n = 0
         cdef int i
         cdef uint8_t b
@@ -260,4 +262,4 @@ cpdef bytes unparse_script (list p):
         elif kind == KIND_OP:
             op = insn[1]
             r.append (chars[op])
-    return ''.join (r)
+    return b''.join (r)
