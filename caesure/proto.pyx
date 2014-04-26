@@ -227,7 +227,6 @@ cdef class VERSION:
             pack_u32 (self.start_height),
             pack_bool (self.relay),
             ]
-        print repr(result)
         return b''.join (result)
 
     def dump (self, fout):
