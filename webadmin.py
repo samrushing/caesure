@@ -9,6 +9,8 @@ import coro
 from urllib import splitquery
 from urlparse import parse_qs
 from cgi import escape
+from caesure._script import parse_script
+from caesure.script import pprint_script
 
 favicon = (
     'AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAAAQAAAAAAAAAAAAAAAAA'
@@ -63,15 +65,14 @@ def shorten (s, w=20):
 def shorthex (s):
     return shorten (hexify (s))
 
-# 20 Sep 2013 - recovered from https://github.com/runeksvendsen/brutus/blob/master/bitcoin.py
-def parse_oscript (s):
-    if (ord(s[0]) == 118 and ord(s[1]) == 169 and ord(s[-2]) == 136 and ord(s[-1]) == 172):
-        size = ord(s[2])
-        addr = key_to_address (s[3:size+3])
-        assert (size+5 == len(s))
-        return addr
-    else:
-        return None
+def is_normal_tx (s):
+    return len(s) == 5 and s[0] == 'OP_DUP' and s[1] == 'OP_HASH160' and s[-2] == 'OP_EQUALVERIFY' and s[-1] == 'OP_CHECKSIG'
+
+def is_pubkey_tx (s):
+    return len(s) == 2 and s[1] == 'OP_CHECKSIG'
+
+def is_p2sh_tx (s):
+    return len(s) == 3 and s[0] == 'OP_HASH160' and s[2] == 'OP_EQUAL' and len(s[1]) == 42
 
 class handler:
 
@@ -95,7 +96,7 @@ class handler:
             method = getattr (self, method_name)
             request.push (
                 '\r\n'.join ([
-                        '<!DOCTYPE HTML><html><head><meta charset="UTF-8"><title>Caesure admin</title>',
+                        '<html><head>',
                         css,
                         '</head><body>',
                         '<h1>caesure admin</h1>',
@@ -107,7 +108,7 @@ class handler:
             except SystemExit:
                 raise
             except:
-                request.push ('<strong>something went wrong</strong><br><br>')
+                request.push ('<h1>something went wrong</h1>')
                 request.push ('<pre>%r</pre>' % (coro.compact_traceback(),))
             request.push ('<hr>')
             self.menu (request)
@@ -136,7 +137,7 @@ class handler:
         RP ('<table><thead><tr><th>packets</th><th>address</th><tr></thead>')
         for conn in the_connection_list:
             try:
-                addr, port = conn.conn.getpeername()
+                addr, port = conn.getpeername()
                 RP ('<tr><td>%d</td><td>%s:%d</td></tr>' % (conn.packet_count, addr, port))
             except:
                 RP ('<br>dead connection</br>')
@@ -146,14 +147,15 @@ class handler:
         RP = request.push
         RP ('\r\n'.join ([
             '<br>block: %d' % (num,),
+            '<br>version: %d' % (b.version,),
             '<br>name: %s' % (name,),
             '<br>prev: %s' % (b.prev_block,),
             '<br>merk: %s' % (hexify (b.merkle_root),),
             '<br>time: %s (%s)' % (b.timestamp, time.ctime (b.timestamp)),
             '<br>bits: %s' % (b.bits,),
             '<br>nonce: %s' % (b.nonce,),
-            '<br><a href="https://blockexplorer.com/b/%d">block explorer</a>' % (num,),
-            '<br><a href="https://blockchain.info/block/%s">blockchain.info</a>' % (name,),
+            '<br><a href="http://blockexplorer.com/b/%d">block explorer</a>' % (num,),
+            '<br><a href="http://blockchain.info/block/%s">blockchain.info</a>' % (name,),
         ]))
         #RP ('<pre>%d transactions\r\n' % len(b.transactions))
         RP ('<table><thead><tr><th>num</th><th>ID</th><th>inputs</th><th>outputs</th></tr></thead>')
@@ -167,6 +169,8 @@ class handler:
         RP = request.push
         if len(parts) == 2 and len (parts[1]):
             name = parts[1]
+            if len(name) < 64 and db.num_block.has_key (int (name)):
+                name = list(db.num_block[int(name)])[0]
         else:
             name = list(db.num_block[db.last_block])[0]
         if db.has_key (name):
@@ -212,23 +216,20 @@ class handler:
         RP ('</table></td><td><table>')
         for i in range (len (tx.outputs)):
             value, pk_script = tx.outputs[i]
-            try:
-                kind, data = parse_script (pk_script)
-            except:
-                kind = 'address'
-                data = parse_oscript (pk_script)
-            col0, col1 = '', ''
-            tr_class = ''
-            if kind == 'address':
-                addr = data
-                # too noisy, simplify
-                kind = ''
-            elif kind == 'pubkey':
-                addr = key_to_address (rhash (data))
+            script = parse_script (pk_script)
+            parsed = pprint_script (script)
+            if is_normal_tx (parsed):
+                h = script[2][1]
+                k = key_to_address (h)
+            elif is_pubkey_tx (parsed):
+                pk = script[0][1]
+                k = 'pk:' + key_to_address (rhash (pk))
+            elif is_p2sh_tx (parsed):
+                h = script[1][1]
+                k = 'p2sh:' + key_to_address (h, 5)
             else:
-                kind = escape (repr (kind))
-                addr = hexify (pk_script)
-            RP ('<tr%s><td>%s</td><td>%s %s</td></tr>' % (tr_class, bcrepr (value), kind, addr))
+                k = parsed
+            RP ('<tr><td>%s</td><td>%s</td></tr>' % (bcrepr (value), k))
         # lock time seems to always be zero
         #RP ('</table></td><td>%s</td></tr>' % tx.lock_time,)
         RP ('</table></td></tr>')
