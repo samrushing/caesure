@@ -1,7 +1,7 @@
-# -*- Mode: Cython -*-
+# -*- Mode: Cython; indent-tabs-mode: nil -*-
 
 import socket
-from socket import AF_INET6, inet_ntop
+from socket import AF_INET6, inet_ntop, inet_pton
 from libc.stdint cimport uint64_t, uint32_t, uint16_t, uint8_t
 from cpython.bytes cimport PyBytes_FromStringAndSize
 
@@ -96,6 +96,12 @@ cdef class pkt:
         if self.pos + n > self.len:
             raise IndexError (self.len, self.pos +n)
 
+    cdef bytes remains (self):
+        cdef bytes r
+        r = self.d[self.pos:self.len]
+        self.pos = self.len
+        return r
+
     cdef uint8_t u8 (self):
         cdef uint8_t r
         self.need (1)
@@ -168,6 +174,13 @@ cdef class pkt:
             addr = addr[7:]
         return services, (addr, port)
 
+    cdef bint unpack_bool (self):
+        cdef bint r
+        self.need (1)
+        r = self.d[self.pos]
+        self.pos += 1
+        return r
+
 # --------------------------------------------------------------------------------
 # messages
 # --------------------------------------------------------------------------------
@@ -181,6 +194,8 @@ cdef class VERSION:
     cdef public uint64_t nonce
     cdef public bytes sub_version_num
     cdef public uint32_t start_height
+    cdef public bint relay
+    cdef public bytes extra
     
     def unpack (self, bytes data):
         cdef pkt p = pkt (data)
@@ -192,6 +207,28 @@ cdef class VERSION:
         self.nonce = p.u64()
         self.sub_version_num = p.unpack_var_str()
         self.start_height = p.u32()
+        if self.version > 70001:
+            self.relay = p.unpack_bool()
+        if p.pos < p.len:
+            self.extra = p.remains()
+        else:
+            self.extra = b''
+
+    def pack (self):
+        cdef list result = [
+            pack_u32 (self.version),
+            pack_u64 (self.services),
+            pack_u64 (self.timestamp),
+            pack_net_addr (self.me_addr),
+            pack_net_addr (self.you_addr),
+            pack_u64 (self.nonce),
+            pack_var_int (len(self.sub_version_num)),
+            self.sub_version_num,
+            pack_u32 (self.start_height),
+            pack_bool (self.relay),
+            ]
+        print repr(result)
+        return b''.join (result)
 
     def dump (self, fout):
         fout.write (
@@ -212,6 +249,9 @@ cdef class VERSION:
 
 cpdef bytes pack_u16 (uint16_t n):
     return chr(n & 0xff) + chr ((n>>8) &0xff)
+
+cpdef bytes pack_net_u16 (uint16_t n):
+    return chr ((n>>8) &0xff) + chr(n & 0xff)
 
 cpdef bytes pack_u32 (uint32_t n):
     cdef int i
@@ -238,6 +278,29 @@ cpdef bytes pack_var_int (uint64_t n):
         return b'\xfe' + pack_u32 (<uint32_t>n)
     else:
         return b'\xff' + pack_u64 (n)
+
+cpdef bytes pack_bool (bint b):
+    if b:
+        return b'\xff'
+    else:
+        return b'\x00'
+
+def pack_ip_addr (addr):
+    if '.' in addr:
+        return socket.inet_pton (socket.AF_INET6, '::ffff:%s' % (addr,))
+    elif ':' in addr:
+        return socket.inet_pton (socket.AF_INET6, addr)
+    else:
+        raise ValueError (addr)
+
+cpdef bytes pack_net_addr (addr):
+    (services, (ip, port)) = addr
+    cdef list result = [
+        pack_u64 (services),
+        pack_ip_addr (ip),
+        pack_net_u16 (port),
+        ]
+    return b''.join (result)
 
 cdef class TX:
     cdef public uint32_t version
@@ -306,7 +369,7 @@ cdef class TX:
             value, script = self.outputs[i]
             self.pack_output (result, value, script)
         result.append (pack_u32 (self.lock_time))
-        return ''.join (result)
+        return b''.join (result)
 
     # unpack1 only exists to capture self.raw during block unpacking
     cdef unpack1 (self, pkt p):
