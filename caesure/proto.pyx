@@ -102,28 +102,28 @@ cdef class pkt:
         self.pos = self.len
         return r
 
-    cdef uint8_t u8 (self):
+    cdef uint8_t u8 (self) except? -1:
         cdef uint8_t r
         self.need (1)
         r = self.d[self.pos]
         self.pos += 1
         return r
 
-    cdef uint16_t u16 (self):
+    cdef uint16_t u16 (self) except? -1:
         cdef uint16_t r
         self.need (2)
         r = (self.d[self.pos+1] << 8) | self.d[self.pos] 
         self.pos += 2
         return r
 
-    cdef uint16_t net_u16 (self):
+    cdef uint16_t net_u16 (self) except? -1:
         cdef uint16_t r
         self.need (2)
         r = (self.d[self.pos+0] << 8) | self.d[self.pos+1] 
         self.pos += 2
         return r
 
-    cdef uint32_t u32 (self):
+    cdef uint32_t u32 (self) except? -1:
         cdef uint32_t r
         self.need (4)
         r = (  (self.d[self.pos+3] << 24)
@@ -133,7 +133,7 @@ cdef class pkt:
         self.pos += 4
         return r
 
-    cdef uint64_t u64 (self):
+    cdef uint64_t u64 (self) except? -1:
         cdef uint64_t r = 0
         cdef int i
         self.need (8)
@@ -143,7 +143,7 @@ cdef class pkt:
         self.pos += 8
         return r
 
-    cdef uint64_t unpack_var_int (self):
+    cdef uint64_t unpack_var_int (self) except? -1:
         cdef uint8_t n0 = self.u8()
         if n0 < 0xfd:
             return n0
@@ -174,7 +174,7 @@ cdef class pkt:
             addr = addr[7:]
         return services, (addr, port)
 
-    cdef bint unpack_bool (self):
+    cdef bint unpack_bool (self) except? -1:
         cdef bint r
         self.need (1)
         r = self.d[self.pos]
@@ -189,8 +189,8 @@ cdef class VERSION:
     cdef public uint32_t version
     cdef public uint64_t services
     cdef public uint64_t timestamp
-    cdef public object me_addr
     cdef public object you_addr
+    cdef public object me_addr
     cdef public uint64_t nonce
     cdef public bytes sub_version_num
     cdef public uint32_t start_height
@@ -202,8 +202,8 @@ cdef class VERSION:
         self.version = p.u32()
         self.services = p.u64()
         self.timestamp = p.u64()
-        self.me_addr = p.unpack_net_addr()
         self.you_addr = p.unpack_net_addr()
+        self.me_addr = p.unpack_net_addr()
         self.nonce = p.u64()
         self.sub_version_num = p.unpack_var_str()
         self.start_height = p.u32()
@@ -219,8 +219,8 @@ cdef class VERSION:
             pack_u32 (self.version),
             pack_u64 (self.services),
             pack_u64 (self.timestamp),
-            pack_net_addr (self.me_addr),
             pack_net_addr (self.you_addr),
+            pack_net_addr (self.me_addr),
             pack_u64 (self.nonce),
             pack_var_int (len(self.sub_version_num)),
             self.sub_version_num,
@@ -235,8 +235,8 @@ cdef class VERSION:
             '  version=%d\n'
             '  services=%d\n'
             '  timestamp=%d\n'
-            '  me_addr=%r\n'
             '  you_addr=%r\n'
+            '  me_addr=%r\n'
             '  nonce=%d\n'
             '  sub_version_num=%r\n'
             '  start_height=%d\n'
@@ -299,6 +299,14 @@ cpdef bytes pack_net_addr (addr):
         pack_ip_addr (ip),
         pack_net_u16 (port),
         ]
+    return b''.join (result)
+
+cpdef bytes pack_addr (list addrs):
+    cdef list result = [pack_var_int (len (addrs))]
+    cdef uint32_t timestamp
+    for timestamp, addr in addrs:
+        result.append (pack_u32 (timestamp))
+        result.append (pack_net_addr (addr))
     return b''.join (result)
 
 cdef class TX:
