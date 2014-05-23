@@ -9,10 +9,8 @@ requirements
 ------------
 
   1. [shrapnel](https://github.com/ironport/shrapnel)
-  2. either 
+     Note: shrapnel needs Cython in order to build.
 
-    * an openssl library or
-    * the pure-python ecdsa package
 
 name
 ----
@@ -24,40 +22,66 @@ It's a pun on the words Caesar and Seizure.  "Render unto Caesar..."
 status
 ------
 
-In the midst of being ported to shrapnel.  This leaves out Windows users, but still
-allows bsd, darwin/osx, & linux.
+Since this uses shrapnel, it leaves out Windows users, but still allows bsd, darwin/osx, & linux.
+
+The target machines are well-connected machines (i.e., in a co-lo) with lots of fast disk and memory.
+[XXX place hard memory requirements here]
 
 In addition to the port to shrapnel, some performance-sensitive code is being moved
 to cython, including packet codec, b58, hexify, etc...
 
-I'm attempting to make this a full node, with tx verification etc....
-
 Script engine is mostly done.  Needs some work on failing constraints
 like stack size, sig count, etc.
 
-For the outpoint database, I'm playing with leveldb.  While verifying
-the entire blockchain, it seems to perform well at first, but then
-disk i/o becomes a serious bottleneck.  For now I'm building the
-outpoint db in memory.
+The current plan is to have a pruning ledger in memory (with journalling-style checkpoints to disk).
+Without a ledger, this code is not a full forwarding node, and thus by default the 'relay' flag in
+the version packet is set to False.
 
+See TODO.txt & ledger.py for details.
 
 usage
 -----
 
-    $ python bitcoin.py -c <your-external-ip-address> <other-ip-address>
+$ python server.py -h::
 
-I recommend connecting to a bitcoin client on your local machine, i.e., 127.0.0.1.
+    usage: server.py [-h] [-o OUTGOING] [-i INCOMING] [-s IP:PORT] [-c IP:PORT]
+                     [-m] [-a]
+    
+    optional arguments:
+      -h, --help            show this help message and exit
+      -o OUTGOING, --outgoing OUTGOING
+                            total number of outgoing connections
+      -i INCOMING, --incoming INCOMING
+                            total number of incoming connections
+      -s IP:PORT, --serve IP:PORT
+                            serve on this address
+      -c IP:PORT, --connect IP:PORT
+                            connect to this address
+      -m, --monitor         run the monitor on /tmp/caesure.bd
+      -a, --webadmin        run the web admin interface at
+                            http://localhost:8380/admin/
 
-Once the client connects to the server it will start to download the block
-database.  This will take a while, even if you're talking to localhost.
+Connecting to a local bitcoind::
 
-You can monitor the progress like this:
+    $ python server.py -o 1 -i 0 -c 127.0.0.1:8333 -m -a
 
-from another terminal:
+Start up a node with 20 outgoing connections and 0 incoming (i.e., no server)::
+
+    $ python server.py -o 20 -i 0 -c 54.215.208.221:8333 -m -a
+
+Once up and running, caesure will start downloading the block chain from the network if necessary.
+
+You can monitor its progress via the web ui:
+
+    http://127.0.0.1:8380/admin/status
+
+Or via the back door:
+
+[from another terminal]
 
     $ telnet /tmp/caesure.bd
 
-telnet to a unix sock is bsd only, on linux try:
+telnet to a unix socket is bsd only, on linux try:
 
     $ nc -CU /tmp/caesure.bd
 
@@ -77,33 +101,10 @@ you'll get a python prompt:
     >>> 
     [...]
 
-
-web admin
----------
-
-With '-a', a web UI is brought up on localhost:
-try http://localhost:8380/admin/ (note: that trailing slash is important)
-
-*** This is getting more useful, try it! ***
-
-
 testnet
 -------
 
-To use testnet, give the '-t' argument along with '-c'.  This will change several
-global values, and should NOT impact your block database - it uses different
-filenames.
-
-paper keys
-----------
-
-I've included a simple utility for generating paper keys.  It will generate a set
-of fresh keys and send them to stdout with the private keys in 'wallet import format'.
-On my Mac, I do this...
-
-    $ python paper_keys.py 5 | lpr
-
-... to send them directly to the printer.
+Testnet support is currently missing, it's not hard to add it back in if needed.
 
 fun with the block chain
 ------------------------
@@ -113,46 +114,50 @@ with the block database.  The block database is written in append-only
 mode, so it's safe to open it read-only from another process, even
 while the client is running.
 
-    $ python -i bitcoin.py
-    reading block headers...
-    last block (135225): 0000000000000478bd4859949e91b44cc28e6a02e7bb2985df250751063e1d1f
-    >>> db['0000000000000478bd4859949e91b44cc28e6a02e7bb2985df250751063e1d1f']
-    <__main__.BLOCK instance at 0x3e7d508>
+$ python -i bitcoin.py::
+
+    >>> db = BlockDB()
+    reading metadata...done 5.62 secs (last_block=302294)
+    reading block headers...starting at pos 19149083102...(302294)done. scanned 17 blocks in 0.00 secs
+    >>> db.last_block
+    302310
+    >>> db.by_num(_)
+    <__main__.BLOCK object at 0x800f090d0>
     >>> b = _
     >>> b.transactions[1]
-    <__main__.TX instance at 0x1e9508>
+    <__main__.TX object at 0x800e30fa0>
     >>> tx = _
-    >>> tx
-    <__main__.TX instance at 0x1e9508>
-    
-    dump a transaction:
     >>> tx.dump()
-    hash: b1f8edbda61061be661731d3de215299f1356736502e52a0772a9259f7fd699d
-    inputs: 1
-      0 13f23ebb1643b6faa02cf93f0bfd5c97c22bd76f3e9464ec61601d84f3afd404:0 493046022100b64136b383721bede39c6ff855339920928006c43d5f536d45c14ab401b736f8022100ee564e42001e3b071545e5f55bbcaa87eca7d731a339177701c40fa6d61510bf014104b3cd4b6d65ffea8fb7781e88a4e67d2f8104b80fb45ee50981940001d3a132584ea10a34a03224823492fd25344c50e40a52069df297da024ffb3175ec745021 4294967295
+    hash: e8751d4130d77cdc3746dc6cce32e00f57b1abf9cef84104a5764cefc933f38b
+    inputs: 2
+      0 0c8c368d00fe30e30426d3759bbb0c0244242d53eb1935ab6ac9e6b7e39e5356:1 ['0x3045022100f0a0e4c2bfd414e8232ae98a4ba564d0040338e8a94e563d6ab599900e2c93dd022054b68c96da5ba2e68bc46a9b65cd230028aa66caa83d85be9e7d155838a44c7e01', '0x04bb8234d9fbc26ad8e9c328805f8ff77cc3857ac3875ad56c74203b93fffe33a868cb870841128c0ce43838929be16da0a369c683c3d2e7fc395e4a21ae6faf30'] 4294967295
+      1 540cff744f98351c7c8459b85a52ca6ab3a6c2b9cdcaf8aec1e4ad2c58cae2df:0 ['0x304502203aca08e12b347d6056f88367434d6ac9fb097eb0d6b677e7987c2122f8d8989402210088cf9838a9ccbd0878b44c381aedb1b8c4e84deeda04964aa4e53e8d9e086c2801', '0x0455d41ff12fbe28a8112d3027f100a80fe16a877b69e9fc66062777ece4d2327c9b7607f056afd4b59014b42daab284e09b64f92fff498e068bcee41752c5e26d'] 4294967295
     2 outputs
-      0 30.00000000 142rU1TWaxZkrTbxvvLGY8VyKiEyYPtKZu
-      1 10.00000000 1Q9vpsULCLxS7dLXGg9kcfG31DTTqnhoxy
+      0 39.52026906 ['OP_DUP', 'OP_HASH160', '0x67a5b321d47682682249a4baa1cf53de4f6d2701', 'OP_EQUALVERIFY', 'OP_CHECKSIG']
+      1 47.87863094 ['OP_DUP', 'OP_HASH160', '0x96a852c7f06db0d93e4bfac314b979976d1095cc', 'OP_EQUALVERIFY', 'OP_CHECKSIG']
     lock_time: 0
-    >>>
+    >>> tx.inputs[0]
+    ((<0c8c368d00fe30e30426d3759bbb0c0244242d53eb1935ab6ac9e6b7e39e5356>, 1), 'H0E\x02!\x00\xf0\xa0\xe4\xc2\xbf\xd4\x14\xe8#*\xe9\x8aK\xa5d\xd0\x04\x038\xe8\xa9NV=j\xb5\x99\x90\x0e,\x93\xdd\x02 T\xb6\x8c\x96\xda[\xa2\xe6\x8b\xc4j\x9be\xcd#\x00(\xaaf\xca\xa8=\x85\xbe\x9e}\x15X8\xa4L~\x01A\x04\xbb\x824\xd9\xfb\xc2j\xd8\xe9\xc3(\x80_\x8f\xf7|\xc3\x85z\xc3\x87Z\xd5lt ;\x93\xff\xfe3\xa8h\xcb\x87\x08A\x12\x8c\x0c\xe488\x92\x9b\xe1m\xa0\xa3i\xc6\x83\xc3\xd2\xe7\xfc9^J!\xaeo\xaf0', 4294967295)
+    >>> parse_script (_[1])
+    [(0, '0E\x02!\x00\xf0\xa0\xe4\xc2\xbf\xd4\x14\xe8#*\xe9\x8aK\xa5d\xd0\x04\x038\xe8\xa9NV=j\xb5\x99\x90\x0e,\x93\xdd\x02 T\xb6\x8c\x96\xda[\xa2\xe6\x8b\xc4j\x9be\xcd#\x00(\xaaf\xca\xa8=\x85\xbe\x9e}\x15X8\xa4L~\x01'), (0, '\x04\xbb\x824\xd9\xfb\xc2j\xd8\xe9\xc3(\x80_\x8f\xf7|\xc3\x85z\xc3\x87Z\xd5lt ;\x93\xff\xfe3\xa8h\xcb\x87\x08A\x12\x8c\x0c\xe488\x92\x9b\xe1m\xa0\xa3i\xc6\x83\xc3\xd2\xe7\xfc9^J!\xaeo\xaf0')]
+    >>> pprint_script (_)
+    ['0x3045022100f0a0e4c2bfd414e8232ae98a4ba564d0040338e8a94e563d6ab599900e2c93dd022054b68c96da5ba2e68bc46a9b65cd230028aa66caa83d85be9e7d155838a44c7e01', '0x04bb8234d9fbc26ad8e9c328805f8ff77cc3857ac3875ad56c74203b93fffe33a868cb870841128c0ce43838929be16da0a369c683c3d2e7fc395e4a21ae6faf30']
+    >>> tx.outputs[0]
+    (3952026906L, 'v\xa9\x14g\xa5\xb3!\xd4v\x82h"I\xa4\xba\xa1\xcfS\xdeOm\'\x01\x88\xac')
+    >>> parse_script (_[1])
+    [(2, 118), (2, 169), (0, 'g\xa5\xb3!\xd4v\x82h"I\xa4\xba\xa1\xcfS\xdeOm\'\x01'), (2, 136), (3, 172, 'v\xa9\x14g\xa5\xb3!\xd4v\x82h"I\xa4\xba\xa1\xcfS\xdeOm\'\x01\x88\xac')]
+    >>> pprint_script (_)
+    ['OP_DUP', 'OP_HASH160', '0x67a5b321d47682682249a4baa1cf53de4f6d2701', 'OP_EQUALVERIFY', 'OP_CHECKSIG']
+    >>> 
 
-fetch a block by number:
+fetch a block by number::
 
     >>> db.num_block[135000]
-    '00000000000001bf349e3e8195f95a080ea17efe012cf7f512664829f9d3772d'
-    >>> b = db[_]
+    set([<00000000000001bf349e3e8195f95a080ea17efe012cf7f512664829f9d3772d>])
 
-dump all its transactions:
+dump all its transactions::
 
     >>> for tx in b.transactions:
     ...     tx.dump()
     ... 
-
-### verify a transaction ###
-
-verify the first input of a transaction:
-
-    >>> tx.verify (0)
-    1
-
 
