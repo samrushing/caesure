@@ -5,12 +5,17 @@ import sys
 import time
 import zlib
 import coro
+import bitcoin
 
 from urllib import splitquery
 from urlparse import parse_qs
 from cgi import escape
 from caesure._script import parse_script
-from caesure.script import pprint_script
+from caesure.script import pprint_script, OPCODES
+from caesure.proto import hexify, Name, name_from_hex
+from bitcoin import key_to_address, rhash
+
+from html_help import *
 
 favicon = (
     'AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAAAQAAAAAAAAAAAAAAAAA'
@@ -38,41 +43,128 @@ favicon = (
 
 from __main__ import *
 
-# all this CSS magic is stolen from looking at the output from pident.artefact2.com
 css = """
 <style type="text/css">
 body { font-family: monospace; }
-table > tbody > tr:nth-child(odd) {
-	background-color:#f0f0f0;
+tr:nth-child(odd) {
+  background-color:#f0f0f0;
 }
-table > tbody > tr:nth-child(even) {
-	background-color:#e0e0e0;
+tr:nth-child(even) {
+  background-color:#e0e0e0;
 }
-table { width:100%; }
-tr.inrow { border:1px green; }
-tr.plus > td { background-color:#80ff80; }
-tr.minus > td { background-color:#ff8080; }
-a.alert { color:#ff0000; }
+.ellipsis {
+  text-overflow: ellipsis;
+  overflow: hidden;
+  width:20em;
+  display:block;
+}
 </style>
 """
 
 def shorten (s, w=20):
     if len(s) > w:
-        return s[:w] + '&hellip;'
+        return wrap1 ('span', s, klass="ellipsis")
     else:
         return s
 
 def shorthex (s):
     return shorten (hexify (s))
 
+def is_push (x):
+    return x[0] == 0
+
+def is_cond (x):
+    return x[0] == 1
+
+def is_op (x, code):
+    return x[0] == 2 and x[1] == code
+
+def is_check (x):
+    return x[0] == 3
+
+def is_checksig (x):
+    return x[0] == 3 and x[1] == OPCODES.OP_CHECKSIG
+
+def is_checkmultisig (x):
+    return x[0] == 3 and x[1] == OPCODES.OP_CHECKMULTISIG
+
 def is_normal_tx (s):
-    return len(s) == 5 and s[0] == 'OP_DUP' and s[1] == 'OP_HASH160' and s[-2] == 'OP_EQUALVERIFY' and s[-1] == 'OP_CHECKSIG'
+    if len(s) == 5 and s[0] == (2, OPCODES.OP_DUP) and s[1] == (2, OPCODES.OP_HASH160) and s[-2] == (2, OPCODES.OP_EQUALVERIFY) and is_check (s[-1]):
+        return 'normal', key_to_address (s[2][1])
+    else:
+        return None
 
 def is_pubkey_tx (s):
-    return len(s) == 2 and s[1] == 'OP_CHECKSIG'
+    if len(s) == 2 and is_check (s[1]):
+        return 'pubkey', key_to_address (rhash (s[0][1]))
+    else:
+        return None
 
 def is_p2sh_tx (s):
-    return len(s) == 3 and s[0] == 'OP_HASH160' and s[2] == 'OP_EQUAL' and len(s[1]) == 42
+    if len(s) == 3 and s[0] == (2, OPCODES.OP_HASH160) and s[2] == (2, OPCODES.OP_EQUAL) and s[1][0] == 0 and len(s[1][1]) == 20:
+        return 'p2sh', key_to_address (s[1][1], 5)
+
+OP_NUMS = {}
+for i in range (0x51, 0x61):
+    OP_NUMS[i] = i - 0x50
+
+def is_multi_tx (s):
+    # OP_3 pubkey0 pubkey1 pubkey2 OP_3 OP_CHECKMULTISIG
+    if is_checkmultisig (s[-1]):
+        n0 = OP_NUMS.get (s[0][1], None)
+        n1 = OP_NUMS.get (s[-2][1], None)
+        if n0 is None or n1 is None:
+            return None
+        elif n1 == (len(s) - 3):
+            for i in range (1, 1+n1):
+                if not s[i][0] == 0:
+                    return None
+            val = '%d/%d:%s' % (
+                n0,
+                n1,
+                '\n'.join ([key_to_address (rhash (s[i][1])) for i in range (1, 1+n1)])
+            )
+            return 'multi', val
+        else:
+            return None
+
+def get_output_addr (pk_script):
+    if len(pk_script) > 500:
+        return 'big', ''
+    try:
+        script = parse_script (pk_script)
+        probe = is_normal_tx (script)
+        if not probe:
+            probe = is_pubkey_tx (script)
+            if not probe:
+                probe = is_p2sh_tx (script)
+                if not probe:
+                    probe = is_multi_tx (script)
+        if probe:
+            return probe
+        else:
+            return 'other', repr (pprint_script (script))
+    except:
+        return 'bad', pk_script.encode ('hex')
+
+def describe_iscript (p):
+    if len(p) == 2 and p[0][0] == 0 and p[1][0] == 0:
+        # PUSH PUSH
+        pubkey = p[1][1]
+        if pubkey[0] in ('\x02', '\x03', '\x04'):
+            return 'sig ' + key_to_address (rhash (pubkey))
+        else:
+            return shorthex (pubkey)
+    elif p[0] == (0, '') and all ([x[0] == 0 for x in p[1:]]):
+        # p2sh redeem
+        sigs = p[1:-1]
+        redeem = parse_script (p[-1][1])
+        _, val = is_multi_tx (redeem)
+        return 'p2sh (%d sigs):%s' % (len(sigs), val)
+    elif len(p) == 1 and p[0][0] == 0:
+        return 'sig'
+    else:
+        return repr (pprint_script (p))
 
 class handler:
 
@@ -134,13 +226,14 @@ class handler:
         RP ('hash[es]: %s' % (escape (repr (db.num_block[db.last_block]))))
         RP ('<br>num: %d' % (db.last_block,))
         RP ('<h3>connections</h3>')
-        RP ('<table><thead><tr><th>packets</th><th>address</th><tr></thead>')
-        for conn in the_connection_list:
-            try:
-                addr, port = conn.getpeername()
-                RP ('<tr><td>%d</td><td>%s:%d</td></tr>' % (conn.packet_count, addr, port))
-            except:
-                RP ('<br>dead connection</br>')
+        RP ('<table><thead><tr><th>packets</th><th>address</th><th>version</th></tr></thead>')
+        for addr, conn in the_connection_map.iteritems():
+            ip, port = conn.other_addr
+            if conn.other_version is not None:
+                v = conn.other_version.sub_version_num
+            else:
+                v = 'N/A'
+            RP ('<tr><td>%d</td><td>%s:%d</td><td>%s</td></tr>' % (conn.packet_count, ip, port, v))
         RP ('</table><hr>')
 
     def dump_block (self, request, b, num, name):
@@ -148,17 +241,18 @@ class handler:
         RP ('\r\n'.join ([
             '<br>block: %d' % (num,),
             '<br>version: %d' % (b.version,),
-            '<br>name: %s' % (name,),
-            '<br>prev: %s' % (b.prev_block,),
-            '<br>merk: %s' % (hexify (b.merkle_root),),
+            '<br>name: %064x' % (name,),
+            '<br>prev: %064x' % (b.prev_block,),
+            '<br>merk: %064x' % (b.merkle_root,),
             '<br>time: %s (%s)' % (b.timestamp, time.ctime (b.timestamp)),
             '<br>bits: %s' % (b.bits,),
             '<br>nonce: %s' % (b.nonce,),
+            '<br>txns: %d' % (len(b.transactions),),
             '<br><a href="http://blockexplorer.com/b/%d">block explorer</a>' % (num,),
-            '<br><a href="http://blockchain.info/block/%s">blockchain.info</a>' % (name,),
+            '<br><a href="http://blockchain.info/block/%064x">blockchain.info</a>' % (name,),
         ]))
         #RP ('<pre>%d transactions\r\n' % len(b.transactions))
-        RP ('<table><thead><tr><th>num</th><th>ID</th><th>inputs</th><th>outputs</th></tr></thead>')
+        RP ('<table style="width:100%"><thead><tr><th>num</th><th>ID</th><th>inputs</th><th>outputs</th></tr></thead>')
         for i in range (len (b.transactions)):
             self.dump_tx (request, b.transactions[i], i)
         RP ('</table>')
@@ -171,19 +265,21 @@ class handler:
             name = parts[1]
             if len(name) < 64 and db.num_block.has_key (int (name)):
                 name = list(db.num_block[int(name)])[0]
+            else:
+                name = name_from_hex (name)
         else:
             name = list(db.num_block[db.last_block])[0]
         if db.has_key (name):
             b = db[name]
             num = db.block_num[name]
-            RP ('<br>&nbsp;&nbsp;<a href="/admin/block/%s">First Block</a>' % (genesis_block_hash,))
+            RP ('<br>&nbsp;&nbsp;<a href="/admin/block/%064x">First Block</a>' % (bitcoin.genesis_block_hash,))
             RP ('&nbsp;&nbsp;<a href="/admin/block/">Last Block</a><br>')
-            if name != genesis_block_hash:
-                RP ('&nbsp;&nbsp;<a href="/admin/block/%s">Prev Block</a>' % (db.prev[name],))
+            if name != bitcoin.genesis_block_hash:
+                RP ('&nbsp;&nbsp;<a href="/admin/block/%064x">Prev Block</a>' % (db.prev[name],))
             else:
                 RP ('&nbsp;&nbsp;Prev Block<br>')
-            if db.next.has_key (name):
-                names = list (db.next[name])
+            if db.num_block.has_key (num):
+                names = list (db.num_block[num])
                 if len(names) > 1:
                     longer, length = longest (names)
                     for i in range (len (names)):
@@ -193,9 +289,9 @@ class handler:
                         else:
                             descrip = "Next Block"
                             aclass = ''
-                        RP ('&nbsp;&nbsp;<a href="/admin/block/%s" %s>%s</a>' % (names[i], aclass, descrip,))
+                        RP ('&nbsp;&nbsp;<a href="/admin/block/%064x" %s>%s</a>' % (names[i], aclass, descrip,))
                 else:
-                    RP ('&nbsp;&nbsp;<a href="/admin/block/%s">Next Block</a>' % (names[0],))
+                    RP ('&nbsp;&nbsp;<a href="/admin/block/%064x">Next Block</a>' % (names[0],))
                 RP ('<br>')
             else:
                 RP ('&nbsp;&nbsp;Next Block<br>')
@@ -203,47 +299,44 @@ class handler:
 
     def dump_tx (self, request, tx, tx_num):
         RP = request.push
-        RP ('<tr><td>%s</td><td>%s</td>\r\n' % (tx_num, shorthex (dhash (tx.raw))))
+        RP ('<tr><td>%s</td><td>%s</td>\n' % (tx_num, shorten (Name (dhash (tx.raw)).hex())))
         RP ('<td><table>')
         for i in range (len (tx.inputs)):
             (outpoint, index), script, sequence = tx.inputs[i]
-            RP ('<tr><td>%3d</td><td>%s:%d</td><td>%s</td></tr>' % (
-                    i,
-                    shorthex (outpoint),
-                    index,
-                    shorthex (script),
-                ))
+            if tx_num == 0:
+                script = shorthex (script)
+            else:
+                script = describe_iscript (parse_script (script))
+            RP ('<tr><td>%s</td><td>%d</td><td>%s</td></tr>' % (
+                shorten (outpoint.hex()),
+                index,
+                script
+            ))
         RP ('</table></td><td><table>')
         for i in range (len (tx.outputs)):
             value, pk_script = tx.outputs[i]
-            script = parse_script (pk_script)
-            parsed = pprint_script (script)
-            if is_normal_tx (parsed):
-                h = script[2][1]
-                k = key_to_address (h)
-            elif is_pubkey_tx (parsed):
-                pk = script[0][1]
-                k = 'pk:' + key_to_address (rhash (pk))
-            elif is_p2sh_tx (parsed):
-                h = script[1][1]
-                k = 'p2sh:' + key_to_address (h, 5)
+            kind, addr = get_output_addr (pk_script)
+            if kind == 'normal':
+                kind = ''
             else:
-                k = parsed
-            RP ('<tr><td>%s</td><td>%s</td></tr>' % (bcrepr (value), k))
+                kind = kind + ':'
+            k = '%s%s' % (kind, addr)
+            RP ('<tr><td>%d</td><td>%s</td><td>%s</td></tr>' % (i, bitcoin.bcrepr (value), k))
         # lock time seems to always be zero
         #RP ('</table></td><td>%s</td></tr>' % tx.lock_time,)
         RP ('</table></td></tr>')
 
     def cmd_reload (self, request, parts):
         new_hand = reload (sys.modules['webadmin'])
-        hl = sys.modules['__main__'].h.handlers
-        for i in range (len (hl)):
-            if hl[i] is self:
-                del hl[i]
+        from __main__ import h
+        hl = h.handlers
+        for i in range (len (h.handlers)):
+            if isinstance (hl[i], coro.http.handlers.auth_handler) and hl[i].handler is self:
                 h0 = new_hand.handler()
-                # copy over any pending send txs
-                h0.pending_send = self.pending_send
-                hl.append (h0)
+                hl[i].handler = h0
+                break
+            elif hl[i] is self:
+                hl[i] = h0
                 break
         request.push ('<h3>[reloaded]</h3>')
         self.cmd_status (request, parts)

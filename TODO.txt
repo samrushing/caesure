@@ -1,0 +1,33 @@
+-*- Mode: rst -*-
+
+NOTES
+-----
+
+* ledger: [optional, for full forwarding node] live pruning ledger in memory.
+* hardening.
+* bootstrap.dat (choose one of the three options)
+* use html_help module.
+
+ledger
+======
+
+Think about a pure-functional data structure representing the current map of live outpoints.
+we can keep a different tree root for each block (including forks), and roll-back would simply
+mean rolling back to that root.  we could keep the last (say) 100 roots with probably little
+impact on memory (since it's all shared anyway).
+
+candidates:
+  aa-map: would be nice but it is not pure with deletion. [at least
+    until we write a pure version of delete?]
+  red-black: more likely candidate. need to track down my delete code.
+  red-black: be lazy and use an stl wrapper?
+
+memory requirements: characterize.
+
+match
+=====
+A match compiler will let us auto-generate code (probably in cython) to match against the various
+transaction types at high speed.  Also, it would be generally useful.
+
+
+

@@ -1,25 +1,22 @@
 # -*- Mode: Python -*-
 
-# A prototype bitcoin implementation.
+# A prototype bitcoin node implementation.
 #
 # Author: Sam Rushing. http://www.nightmare.com/~rushing/
-# July 2011 - Mar 2013
+# July 2011 - May 2014
 #
 # because we can have forks/orphans, 
 # num->block is 1->N and block->num is 1->1
 #
-
-# next step: keeping track of all outpoints.
-#  consider using leveldb?
-
 import copy
+import cPickle
 import hashlib
 import random
 import struct
 import socket
+import sys
 import time
 import os
-import pickle
 import string
 
 import coro
@@ -30,21 +27,26 @@ from pprint import pprint as pp
 
 import caesure.proto
 
-from caesure.script import eval_script, verifying_machine, pprint_script
-from caesure._script import parse_script
+from caesure.proto import base58_encode, base58_decode, hexify, Name
+from caesure.script import eval_script, verifying_machine, pprint_script, unrender_int
+from caesure._script import parse_script, ScriptError
 
 W = coro.write_stderr
 
+def P (msg):
+    sys.stdout.write (msg)
+
 # these are overriden for testnet
 BITCOIN_PORT = 8333
-BITCOIN_MAGIC = '\xf9\xbe\xb4\xd9'
+MAGIC = '\xf9\xbe\xb4\xd9'
 BLOCKS_PATH = 'blocks.bin'
-genesis_block_hash = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'
+METADATA_PATH = 'metadata.bin'
+genesis_block_hash = Name ('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'.decode ('hex')[::-1])
 
 # overridden by commandline argument
 MY_PORT = BITCOIN_PORT
 
-from caesure.proto import base58_encode, base58_decode, hexify
+ZERO_NAME = Name ('\x00' * 32)
 
 def dhash (s):
     return sha256(sha256(s).digest()).digest()
@@ -66,40 +68,35 @@ class BadAddress (Exception):
 class VerifyError (Exception):
     pass
 
-def key_to_address (s):
-    checksum = dhash ('\x00' + s)[:4]
-    return '1' + base58_encode (
-        int ('0x' + (s + checksum).encode ('hex'), 16)
-        )
+def key_to_address (s, version=0):
+    s = chr(version) + s
+    checksum = dhash (s)[:4]
+    encoded = base58_encode (
+        int ((s + checksum).encode ('hex'), 16)
+    )
+    pad = 0
+    for c in s:
+        if c == '\x00':
+            pad += 1
+        else:
+            break
+    return ('1' * pad) + encoded
+
+h160_mask = (1<<(8*20))-1
 
 def address_to_key (s):
-    # strip off leading '1'
-    s = ('%048x' % base58_decode (s[1:])).decode ('hex')
-    hash160, check0 = s[:-4], s[-4:]
-    check1 = dhash ('\x00' + hash160)[:4]
+    n = base58_decode (s)
+    # <version:1><hash:20><check:4>
+    check0 = struct.pack ('>L', n & 0xffffffff)
+    n >>= 32
+    h160 = n & h160_mask
+    n >>= 160
+    v = n
+    h160 = ('%040x' % (h160)).decode ('hex')
+    check1 = dhash (chr(v) + h160)[:4]
     if check0 != check1:
         raise BadAddress (s)
-    return hash160
-
-def pkey_to_address (s):
-    s = '\x80' + s
-    checksum = dhash (s)[:4]
-    return base58_encode (
-        int ((s + checksum).encode ('hex'), 16)
-        )
-
-def unhexify (s, flip=False):
-    if flip:
-        return s.decode ('hex')[::-1]
-    else:
-        return s.decode ('hex')
-
-def frob_hash (s):
-    r = []
-    for i in range (0, len (s), 2):
-        r.append (s[i:i+2])
-    r.reverse()
-    return ''.join (r)
+    return v, h160
 
 class timer:
     def __init__ (self):
@@ -126,15 +123,7 @@ MAX_BLOCK_SIZE = 1000000
 COIN           = 100000000
 MAX_MONEY      = 21000000 * COIN
 
-def pack_net_addr ((services, (addr, port))):
-    addr = pack_ip_addr (addr)
-    port = struct.pack ('!H', port)
-    return struct.pack ('<Q', services) + addr + port
-
-def make_nonce():
-    return random.randint (0, 1<<64L)
-
-NULL_OUTPOINT = ('\x00' * 32, 4294967295)
+NULL_OUTPOINT = (ZERO_NAME, 4294967295)
 
 class TX (caesure.proto.TX):
 
@@ -150,18 +139,18 @@ class TX (caesure.proto.TX):
         return dhash (self.render())
 
     def dump (self):
-        print 'hash: %s' % (hexify (dhash (self.render())),)
-        print 'inputs: %d' % (len(self.inputs))
+        P ('hash: %s\n' % (hexify (dhash (self.render())),))
+        P ('inputs: %d\n' % (len(self.inputs)))
         for i in range (len (self.inputs)):
             (outpoint, index), script, sequence = self.inputs[i]
             redeem = pprint_script (parse_script (script))
-            print '%3d %s:%d %r %d' % (i, hexify(outpoint), index, redeem, sequence)
-        print '%d outputs' % (len(self.outputs))
+            P ('%3d %064x:%d %r %d\n' % (i, outpoint, index, redeem, sequence))
+        P ('%d outputs\n' % (len(self.outputs),))
         for i in range (len (self.outputs)):
             value, pk_script = self.outputs[i]
             pk_script = pprint_script (parse_script (pk_script))
-            print '%3d %s %r' % (i, bcrepr (value), pk_script)
-        print 'lock_time:', self.lock_time
+            P ('%3d %s %r\n' % (i, bcrepr (value), pk_script))
+        P ('lock_time: %s\n' % (self.lock_time,))
 
     def render (self):
         return self.pack()
@@ -180,17 +169,6 @@ class TX (caesure.proto.TX):
                 script = ''
             tx0.inputs[i] = outpoint, script, sequence
         return tx0.render() + struct.pack ('<I', hash_type)
-
-    # XXX to be removed
-    def sign (self, key, index):
-        hash, _, pubkey = self.get_ecdsa_hash (index)
-        assert (key.get_pubkey() == pubkey)
-        # tack on the hash type byte.
-        sig = key.sign (hash) + '\x01'
-        iscript = make_iscript (sig, pubkey)
-        op0, _, seq = self.inputs[index]
-        self.inputs[index] = op0, iscript, seq
-        return sig
 
     def verify0 (self, index, prev_outscript):
         outpoint, script, sequence = self.inputs[index]
@@ -214,15 +192,12 @@ class TX (caesure.proto.TX):
             raise VerifyError
 
     def verify1 (self, pub_key, sig, vhash):
-        if building_txmap:
-            return 1
-        else:
-            k = KEY()
-            #W ('pub_key=%r\n' % (pub_key,))
-            k.set_pubkey (pub_key)
-            r = k.verify (vhash, sig)
-            #print 'ecdsa verify...', r
-            return r
+        k = KEY()
+        #W ('pub_key=%r\n' % (pub_key,))
+        k.set_pubkey (pub_key)
+        r = k.verify (vhash, sig)
+        #print 'ecdsa verify...', r
+        return r
 
 def read_ip_addr (s):
     r = socket.inet_ntop (socket.AF_INET6, s)
@@ -260,20 +235,57 @@ class BadBlock (Exception):
 
 class BLOCK (caesure.proto.BLOCK):
 
+    def dump (self, fout=sys.stdout):
+        fout.write (
+            'version:%d\n'
+            'prev_block:%s\n'
+            'merkle_root:%s\n'
+            'timestamp:%s\n'
+            'bits:%08x\n'
+            'nonce:%d\n' % (
+                self.version,
+                self.prev_block,
+                self.merkle_root.encode('hex'),
+                self.timestamp,
+                self.bits,
+                self.nonce
+                )
+            )
+        for i in range (len (self.transactions)):
+            fout.write ('tx %d {\n' % (i,))
+            self.transactions[i].dump (fout)
+            fout.write ('}\n')
+
+    def __len__ (self):
+        return len (self.transactions)
+
+    def get_height (self):
+        if self.version < 2:
+            raise ValueError ("no block height in version 1 blocks")
+        else:
+            tx0 = self.transactions[0]
+            coinbase = tx0.inputs[0]
+            ((outpoint_hash, outpoint_index), script, sequence) = coinbase
+            # Note: we can't use parse_script here because coinbases are *not*
+            #  guaranteed to be proper scripts.  At least yet.
+            nbytes = ord(script[0])
+            height = unrender_int (script[1:1+nbytes])
+            return height
+
     def make_TX (self):
         return TX()
 
     def check_bits (self):
         shift  = self.bits >> 24
         target = (self.bits & 0xffffff) * (1 << (8 * (shift - 3)))
-        val = int (self.name, 16)
+        val = int (self.name)
         return val < target
 
     def get_merkle_hash (self):
         hl = [dhash (t.raw) for t in self.transactions]
         while 1:
             if len(hl) == 1:
-                return hl[0]
+                return Name (hl[0])
             if len(hl) % 2 != 0:
                 hl.append (hl[-1])
             hl0 = []
@@ -310,40 +322,92 @@ class BLOCK (caesure.proto.BLOCK):
         # XXX more to come...
 
 # --------------------------------------------------------------------------------
-# block_db file format: (<8 bytes of size> <block>)+
+# BlockDB file format: (<8 bytes of size> <block>)+
+#
+# Note: this is very close to the bitcoin.dat torrent format, in fact they can be
+#   converted in-place between each other.
 
-ZERO_BLOCK = '00' * 32
+# XXX consider mmap
 
-class block_db:
+class BlockDB:
 
     def __init__ (self, read_only=False):
         self.read_only = read_only
         self.blocks = {}
         self.prev = {}
-        self.next = {}
-        self.block_num = {ZERO_BLOCK: -1}
+        self.block_num = {ZERO_NAME: -1}
         self.num_block = {}
         self.last_block = 0
-        self.build_block_chain()
         self.file = None
+        if os.path.isfile (METADATA_PATH):
+            f = open (METADATA_PATH, 'rb')
+            start_scan = self.load_metadata (f)
+            f.close()
+        else:
+            start_scan = 0
+        self.scan_block_chain (start_scan)
+        coro.spawn (self.metadata_thread)
 
     def get_header (self, name):
         path = os.path.join ('blocks', name)
         return open (path).read (80)
 
-    # block can have only one previous block, but may have multiple
-    #  next blocks.
-    def build_block_chain (self):
+    metadata_flush_time = 5 * 60 * 60 # five hours
+
+    def metadata_thread (self):
+        while 1:
+            coro.sleep_relative (self.metadata_flush_time)
+            self.dump_metadata()
+
+    def dump_metadata (self):
+        W ('saving metadata...')
+        t0 = timer()
+        fileob = open (METADATA_PATH + '.tmp', 'wb')
+        cPickle.dump (1, fileob, 2)
+        cPickle.dump (len(self.blocks), fileob, 2)
+        for a, pos in self.blocks.iteritems():
+            cPickle.dump (
+                [str(a), pos, self.block_num[a], str(self.prev[a])],
+                fileob,
+                2
+                )
+        fileob.close()
+        os.rename (METADATA_PATH + '.tmp', METADATA_PATH)
+        W ('done %.2f secs\n' % (t0.end(),))
+
+    def load_metadata (self, fileob):
+        W ('reading metadata...')
+        t0 = timer()
+        version = cPickle.load (fileob)
+        assert (version == 1)
+        nblocks = cPickle.load (fileob)
+        max_block = 0
+        max_pos = 0
+        for i in xrange (nblocks):
+            name, pos, num, prev = cPickle.load (fileob)
+            name = Name (name)
+            prev = Name (prev)
+            self.blocks[name] = pos
+            max_pos = max (pos, max_pos)
+            self.prev[name] = prev
+            self.num_block.setdefault (num, set()).add (name)
+            self.block_num[name] = num
+            max_block = max (max_block, num)
+        self.last_block = max_block
+        W ('done %.2f secs (last_block=%d)\n' % (t0.end(), self.last_block))
+        return max_pos
+
+    # block can have only one previous block, but may have multiple next blocks.
+    def scan_block_chain (self, last_pos):
         from caesure.proto import unpack_block_header
         if not os.path.isfile (BLOCKS_PATH):
             open (BLOCKS_PATH, 'wb').write('')
         file = open (BLOCKS_PATH, 'rb')
-        print 'reading block headers...'
-        file.seek (0)
-        i = -1
-        name = ZERO_BLOCK
-        # first, read all the blocks
+        W ('reading block headers...')
+        file.seek (last_pos)
+        W ('starting at pos %r...' % (last_pos,))
         t0 = timer()
+        count = 0
         while 1:
             pos = file.tell()
             size = file.read (8)
@@ -356,20 +420,21 @@ class block_db:
                  timestamp, bits, nonce) = unpack_block_header (header)
                 # skip the rest of the block
                 file.seek (size-80, 1)
-                prev_block = hexify (prev_block, True)
-                name = hexify (dhash (header), True)
+                name = Name (dhash (header))
                 bn = 1 + self.block_num[prev_block]
                 self.prev[name] = prev_block
-                self.next.setdefault (prev_block, set()).add (name)
                 self.block_num[name] = bn
                 self.num_block.setdefault (bn, set()).add (name)
                 self.blocks[name] = pos
                 self.last_block = max (self.last_block, bn)
-        if name != ZERO_BLOCK:
-            print 'last block (%d): %r' % (self.last_block, self.num_block[self.last_block])
+                if count % 1000 == 0:
+                    W ('(%d)' % (bn,))
+                count += 1
+        W ('done. scanned %d blocks in %.02f secs\n' % (count, t0.end()))
         file.close()
-        print '%.02f secs to load block chain' % (t0.end())
         self.read_only_file = open (BLOCKS_PATH, 'rb')
+        if count > 1000:
+            self.dump_metadata()
 
     def open_for_append (self):
         # reopen in append mode
@@ -383,6 +448,8 @@ class block_db:
         return self.read_only_file.read (size)
 
     def __getitem__ (self, name):
+        if len(name) == 64:
+            name = caesure.proto.name_from_hex (name)
         b = BLOCK()
         b.unpack (self.get_block (name))
         return b
@@ -396,8 +463,8 @@ class block_db:
 
     def add (self, name, block):
         if self.blocks.has_key (name):
-            print 'ignoring block we already have:', name
-        elif not self.block_num.has_key (block.prev_block) and block.prev_block != ZERO_BLOCK:
+            W ('ignoring block we already have: %r\n' % (name,))
+        elif not self.block_num.has_key (block.prev_block) and block.prev_block != ZERO_NAME:
             # if we don't have the previous block, there's no
             #  point in remembering it at all.  toss it.
             pass
@@ -413,9 +480,8 @@ class block_db:
         self.file.write (block.raw)
         self.file.flush()
         self.prev[name] = block.prev_block
-        self.next.setdefault (block.prev_block, set()).add (name)
         self.blocks[name] = pos
-        if block.prev_block == ZERO_BLOCK:
+        if block.prev_block == ZERO_NAME:
             i = -1
         else:
             i = self.block_num[block.prev_block]
@@ -441,512 +507,9 @@ class block_db:
         step = 1
         while n > 0:
             name = list(self.num_block[n])[0]
-            result.append (unhexify (name, flip=True))
+            result.append (name)
             n -= step
             i += 1
             if i >= 10:
                 step *= 2
         return result
-    
-# --------------------------------------------------------------------------------
-#                               protocol
-# --------------------------------------------------------------------------------
-
-class BadState (Exception):
-    pass
-
-class dispatcher:
-    def __init__ (self):
-        self.known = []
-        self.requested = set()
-        self.ready = {}
-        self.target = 0
-        if not the_block_db:
-            self.known.append (genesis_block_hash)
-
-    def notify_height (self, height):
-        if height > self.target:
-            self.target = height
-            c = get_random_connection()
-            W ('sending getblocks() target=%d\n' % (self.target,))
-            c.getblocks()
-
-    def add_inv (self, objid, name):
-        if objid == OBJ_BLOCK:
-            self.add_to_known (name)
-        elif objid == OBJ_TX:
-            pass
-        else:
-            W ('*** strange <inv> of type %r %r\n' % (objid, name))
-
-    def add_block (self, payload):
-        db = the_block_db
-        b = BLOCK()
-        b.unpack (payload)
-        self.ready[b.prev_block] = b
-        if b.name in self.requested:
-            self.requested.remove (b.name)
-        # we may have several blocks waiting to be chained
-        #  in by the arrival of a missing link...
-        while 1:
-            if db.has_key (b.prev_block) or (b.prev_block == ZERO_BLOCK):
-                del self.ready[b.prev_block]
-                self.block_to_db (b.name, b)
-                if self.ready.has_key (b.name):
-                    b = self.ready[b.name]
-                else:
-                    break
-            else:
-                break
-        if (db.last_block < self.target) and not len(self.requested):
-            c = get_random_connection()
-            c.getblocks()
-        
-    def kick_known (self):
-        chunk = min (self.target - the_block_db.last_block, 100)
-        if len (self.known) >= chunk:
-            c = get_random_connection()
-            chunk, self.known = self.known[:100], self.known[100:]
-            c.getdata ([(OBJ_BLOCK, name) for name in chunk])
-            self.requested.update (chunk)
-
-    def add_to_known (self, name):
-        self.known.append (name)
-        self.kick_known()
-
-    def block_to_db (self, name, b):
-        try:
-            b.check_rules()
-        except BadState as reason:
-            W ('*** bad block: %s %r' % (name, reason))
-        else:
-            the_block_db.add (name, b)
-
-class base_connection:
-
-    # protocol was changed to reflect *protocol* version, not bitcoin-client-version
-    version = 60002 # trying to update protocol from 60001 mar 2013
-
-    def __init__ (self, addr='127.0.0.1', port=BITCOIN_PORT):
-        self.addr = addr
-        self.port = port
-        self.nonce = make_nonce()
-        self.conn = coro.tcp_sock()
-        self.packet_count = 0
-        self.stream = coro.read_stream.sock_stream (self.conn)
-
-    def connect (self):
-        self.conn.connect ((self.addr, self.port))
-
-    def send_packet (self, command, payload):
-        lc = len(command)
-        assert (lc < 12)
-        cmd = command + ('\x00' * (12 - lc))
-        h = dhash (payload)
-        checksum, = struct.unpack ('<I', h[:4])
-        packet = struct.pack (
-            '<4s12sII',
-            BITCOIN_MAGIC,
-            cmd,
-            len(payload),
-            checksum
-            ) + payload
-        self.conn.send (packet)
-        W ('=> %s\n' % (command,))
-
-    def send_version (self):
-        data = struct.pack ('<IQQ', self.version, 1, int(time.time()))
-        data += pack_net_addr ((1, (self.addr, self.port)))
-        data += pack_net_addr ((1, (my_addr, MY_PORT)))
-        data += struct.pack ('<Q', self.nonce)
-        data += pack_var_str ('/caesure:20130306/')
-        start_height = the_block_db.last_block
-        if start_height < 0:
-            start_height = 0
-        # ignore bip37 for now - leave True
-        data += struct.pack ('<IB', start_height, 1)
-        self.send_packet ('version', data)
-
-    def gen_packets (self):
-        while 1:
-            data = self.stream.read_exact (24)
-            if not data:
-                W ('connection closed.\n')
-                break
-            magic, command, length, checksum = struct.unpack ('<I12sII', data)
-            command = command.strip ('\x00')
-            W ('[%s]' % (command,))
-            self.packet_count += 1
-            self.header = magic, command, length
-            # XXX verify checksum
-            if length:
-                payload = self.stream.read_exact (length)
-            else:
-                payload = ''
-            yield (command, payload)
-
-    def getblocks (self):
-        hashes = the_block_db.set_for_getblocks()
-        hashes.append ('\x00' * 32)
-        payload = ''.join ([
-            struct.pack ('<I', self.version),
-            pack_var_int (len(hashes)-1), # count does not include hash_stop
-            ] + hashes
-            )
-        self.send_packet ('getblocks', payload)
-
-    def getdata (self, what):
-        "request (TX|BLOCK)+ from the other side"
-        payload = [pack_var_int (len(what))]
-        for kind, name in what:
-            # decode hash
-            h = unhexify (name, flip=True)
-            payload.append (struct.pack ('<I32s', kind, h))
-        self.send_packet ('getdata', ''.join (payload))
-
-class connection (base_connection):
-
-    def __init__ (self, addr='127.0.0.1', port=BITCOIN_PORT):
-        base_connection.__init__ (self, addr, port)
-        coro.spawn (self.go)
-
-    def go (self):
-        self.connect()
-        try:
-            the_connection_list.append (self)
-            self.send_version()
-            for command, payload in self.gen_packets():
-                self.do_command (command, payload)
-        finally:
-            the_connection_list.remove (self)
-            self.conn.close()
-
-    def check_command_name (self, command):
-        for ch in command:
-            if ch not in string.letters:
-                return False
-        return True
-
-    def do_command (self, cmd, data):
-        if self.check_command_name (cmd):
-            try:
-                method = getattr (self, 'cmd_%s' % cmd,)
-            except AttributeError:
-                W ('no support for "%s" command\n' % (cmd,))
-            else:
-                try:
-                    method (data)
-                except:
-                    W ('caesure error: %r\n' % (coro.compact_traceback(),))
-                    W ('     ********** problem processing %r command\n' % (cmd,))
-        else:
-            W ('bad command: "%r", ignoring\n' % (cmd,))
-
-    max_pending = 50
-
-    def cmd_version (self, data):
-        self.other_version = caesure.proto.unpack_version (data)
-        self.send_packet ('verack', '')
-        the_dispatcher.notify_height (self.other_version.start_height)
-
-    def cmd_verack (self, data):
-        pass
-
-    def cmd_addr (self, data):
-        addr = caesure.proto.unpack_addr (data)
-        print addr
-
-    def cmd_inv (self, data):
-        pairs = caesure.proto.unpack_inv (data)
-        for objid, name in pairs:
-            the_dispatcher.add_inv (objid, hexify (name, True))
-
-    def cmd_getdata (self, data):
-        return caesure.proto.unpack_getdata (data)
-
-    def cmd_tx (self, data):
-        return caesure.proto.make_tx (data)
-
-    def cmd_block (self, data):
-        the_dispatcher.add_block (data)
-
-    def cmd_ping (self, data):
-        # supposed to do a pong?
-        W ('ping: data=%r\n' % (data,))
-
-    def cmd_alert (self, data):
-        payload, signature = caesure.proto.unpack_alert (data)
-        # XXX verify signature
-        W ('alert: sig=%r payload=%r\n' % (signature, payload,))
-
-the_block_db = None
-the_connection_list = []
-
-def get_random_connection():
-    return random.choice (the_connection_list)
-
-# Mar 2013 fetched from https://github.com/bitcoin/bitcoin/blob/master/src/net.cpp
-dns_seeds = [
-    "bitseed.xf2.org",
-    "dnsseed.bluematt.me",
-    "seed.bitcoin.sipa.be",
-    "dnsseed.bitcoin.dashjr.org",
-    ]
-
-def dns_seed():
-    print 'fetching DNS seed addresses...'
-    addrs = set()
-    for name in dns_seeds:
-        for info in socket.getaddrinfo (name, 8333):
-            family, type, proto, _, addr = info
-            if family == socket.AF_INET and type == socket.SOCK_STREAM and proto == socket.IPPROTO_TCP:
-                addrs.add (addr[0])
-    print '...done.'
-    return addrs
-
-# trying to verify this roll of the dice...
-# http://blockchain.info/tx/013108d7408718f2df8c0c66fe1eb615020d08b5d9418c4c330ceb792c72f857
-def do_sample_verify():
-    db = the_block_db
-    b = db.by_num (226670)
-    # outputs are from 226670, txn -4
-    tx = b.transactions[-4]
-    # input 0 is from 226670, txn 142, output 0
-    amt, oscript = b.transactions[142].outputs[0]
-    tx.verify0 (0, oscript)
-    # input 1 is from 226589, txn 344, output 1
-    amt, oscript = db.by_num(226589).transactions[344].outputs[1]
-    tx.verify0 (1, oscript)
-
-# try to verify the first multisig...
-# http://blockchain.info/tx/eb3b82c0884e3efa6d8b0be55b4915eb20be124c9766245bcc7f34fdac32bccb
-def do_sample_multi0():
-    db = the_block_db
-    b = db.by_num (163685) # tx 13
-    tx = b.transactions[13]
-    if 0:
-        # source 0 is from the same block, tx 11, output 0
-        amt, oscript = b.transactions[11].outputs[0]
-        tx.verify0 (0, oscript)
-    # source 1 is from the same block, tx 11, output 1
-    amt, oscript = b.transactions[11].outputs[1]
-    tx.verify0 (1, oscript)
-
-# 02b038020755f63d45d1c8c7ab495d5d3bbc82113d95fbb964e7f8184e1b27bd
-def do_sample_multi():
-    db = the_block_db
-    b = db.by_num (227878) # tx 139
-    tx = b.transactions[139]
-    # only one source, block 227861, tx 95, output 0
-    amt, oscript = db.by_num (227861).transactions[95].outputs[0]
-    tx.verify0 (0, oscript)
-
-# chain-walking generators
-
-# these two are mutually recursive.
-# whenever a fork is found, we create a generator for each
-#  sub-chain and 'race' them against each other.  When only
-#  one remains, we return with its name.
-
-def chain_gen (name):
-    "generate a series of 1... for each block in this sub-chain"
-    db = the_block_db
-    while 1:
-        if db.next.has_key (name):
-            names = db.next[name]
-            if len(names) > 1:
-                for x in longest (names):
-                    yield 1
-            else:
-                name = list(names)[0]
-                yield 1
-        else:
-            break
-
-def longest (names):
-    "find the longest of the chains in <names>"
-    gens = [ (name, chain_gen (name)) for name in list (names) ]
-    ng = len (gens)
-    left = ng
-    n = 0
-    while left > 1:
-        for i in range (ng):
-            if gens[i]:
-                name, gen = gens[i]
-                try:
-                    gen.next()
-                except StopIteration:
-                    gens[i] = None
-                    left -= 1
-        n += 1
-    [(name, _)] = [x for x in gens if x is not None]
-    return name, n
-
-# find the 'official' chain starting from the beginning, using
-#  longest() to identify the longer of any subchains.
-#  something that could be fun here... actually make it an 'infinite'
-#  generator - as in it will pause until the next block comes along.
-#
-# XXX consider how to deal with a fork in real time.
-
-def db_gen():
-    db = the_block_db
-    name = genesis_block_hash
-    while 1:
-        yield name
-        if db.next.has_key (name):
-            names = db.next[name]
-            if len(names) == 1:
-                name = list(names)[0]
-            else:
-                name, _ = longest (names)
-        else:
-            break
-
-class monies:
-    def __init__ (self):
-        import leveldb
-        self.monies = leveldb.LevelDB ('monies')
-    def __getitem__ (self, key):
-        return self.monies.Get (key)
-    def __setitem__ (self, key, val):
-        self.monies.Put (key, val)
-    def __delitem__ (self, key):
-        self.monites.Delete (key)
-
-pack_u64 = caesure.proto.pack_u64
-
-class txmap:
-    def __init__ (self):
-        import leveldb
-        #self.monies = leveldb.LevelDB ('monies')
-        self.monies = {}
-
-    def store_outputs (self, tx):
-        for i in range (len (tx.outputs)):
-            # inputs are referenced by (txhash,index) so we need to store this into db,
-            #   and only remove it when it has been spent.  so probably we need (txhash,index)->(amt,script)
-            #   alternatively we could store it as an offset,size into the db file... but probably not worth it.
-            amt, pk_script = tx.outputs[i]
-            self.monies['%s:%d' % (tx.name, i)] = pack_u64(amt) + pk_script
-
-    # failed txn here: https://blockchain.info/block-index/172908
-    def initialize (self):
-        db = the_block_db
-        n = 0
-        W ('start: %r\n' % (time.ctime(),))
-        for name in db_gen():
-            b = db[name]
-            # assume coinbase is ok for now
-            tx0 = b.transactions[0]
-            self.store_outputs (tx0)
-            for tx in b.transactions[1:]:
-                # verify each transaction
-                # first, we need the output script for each of the inputs
-                for i in range (len (tx.inputs)):
-                    (outpoint, index), script, sequence = tx.inputs[i]
-                    key = '%s:%d' % (hexify (outpoint, True), index)
-                    pair = self.monies[key]
-                    amt, oscript = pair[:8], pair[8:]
-                    amt, = struct.unpack ('<Q', amt)
-                    try:
-                        tx.verify0 (i, oscript)
-                    except VerifyError:
-                        W ('failed verification: %r:%d\n' % (tx.name,i))
-                    except NotImplementedError:
-                        W ('not implemented: %r:%d\n' % (tx.name,i))
-                    else:
-                        del self.monies[key]
-                self.store_outputs (tx)
-            n += 1
-            #if n == 120000:
-            #    coro.profiler.start()
-            #if n == 130000:
-            #    coro.profiler.stop()
-            if n % 1000 == 0:
-                W ('.')
-        W ('done: %r\n' % (time.ctime(),))
-
-# difficult to parallelize the verification, because the transactions in a single
-#   block can be dependent on other txns in that same block.  [this must mean that
-#   they are ordered?]
-
-building_txmap = False
-the_txmap = None
-
-def build_txmap():
-    global building_txmap, the_txmap
-    tm = txmap()
-    building_txmap = True
-    try:
-        tm.initialize()
-    finally:
-        building_txmap = False
-    the_txmap = tm
-
-if __name__ == '__main__':
-    import argparse
-    p = argparse.ArgumentParser(description='Caesure: a python bitcoin server/node')
-    p.add_argument('-t', '--testnet', action='store_true', help='use Bitcoin testnet')
-    p.add_argument('-m', '--monitor', action='store_true', help='run the monitor on /tmp/caesure.bd')
-    p.add_argument('-a', '--webadmin', action='store_true', help='run the web admin interface at http://localhost:8380/admin/')
-    # We don't listen for connections yet, so no need for this just now
-    #p.add_argument('-p', '--port', nargs=1, type=int, help='local TCP port (default: 8333 or 18333 for testnet)')
-    g = p.add_mutually_exclusive_group()
-    g.add_argument('-c', '--client', nargs=2, help='run as a client of SERVERADDRESS', metavar=('MYADDRESS', 'SERVERADDRESS'))
-    g.add_argument('-n', '--network', nargs=1, help='run in network mode at MYADDRESS', metavar='MYADDRESS')
-    args = p.parse_args()
-
-    if args.testnet:
-        BITCOIN_PORT = 18333
-        BITCOIN_MAGIC = '\xfa\xbf\xb5\xda'
-        BLOCKS_PATH = 'blocks.testnet.bin'
-        genesis_block_hash = '00000007199508e34a9ff81e6ec0c477a4cccff2a4767a8eee39c11db367b008'
-
-    # mount the block database
-    the_block_db = block_db()
-    the_dispatcher = dispatcher()
-    network = False
-
-    #if args.port is not None:
-    #    MY_PORT = args.port[0]
-
-    # client mode
-    if args.client is not None:
-        [my_addr, other_addr] = args.client
-        bc = connection (other_addr)
-        network = True
-
-    # network mode
-    if args.network is not None:
-        my_addr = args.network[0]
-        addrs = dns_seed()
-        for addr in addrs:
-            connection (addr)
-        network = True
-
-    do_monitor = args.monitor
-    do_admin   = args.webadmin
-
-    if network:
-        if do_monitor:
-            import coro.backdoor
-            coro.spawn (coro.backdoor.serve, unix_path='/tmp/caesure.bd')
-        if do_admin:
-            import coro.http
-            import webadmin
-            import zlib
-            h = coro.http.server()
-            coro.spawn (h.start, (('127.0.0.1', 8380)))
-            h.push_handler (webadmin.handler())
-            h.push_handler (coro.http.handlers.coro_status_handler())
-            h.push_handler (coro.http.handlers.favicon_handler (zlib.compress (webadmin.favicon)))
-        coro.event_loop()
-    else:
-        # database browsing mode
-        db = the_block_db # alias
-        
-    # this is just so I can use the coro profiler
-    #import coro.profiler
-    #coro.spawn (build_txmap)
-    #coro.event_loop()

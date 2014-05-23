@@ -2,13 +2,54 @@
 
 import socket
 from socket import AF_INET6, inet_ntop, inet_pton
-from libc.stdint cimport uint64_t, uint32_t, uint16_t, uint8_t
+from libc.stdint cimport uint64_t, uint32_t, uint16_t, uint8_t, intptr_t
+from libc.string cimport memcpy, memcmp
 from cpython.bytes cimport PyBytes_FromStringAndSize
 
 from hashlib import sha256
 
 def dhash (s):
     return sha256(sha256(s).digest()).digest()
+
+# compact representation of sha256 hashes
+cdef class Name:
+    cdef unsigned char[32] name
+    def __init__ (self, bytes name):
+        if name is not None:
+            assert (len (name) == 32)
+            memcpy (self.name, <char*>name, 32)
+    cdef set_value (self, unsigned char * src):
+        memcpy (self.name, src, 32)
+    def __hash__ (self):
+        return (<intptr_t*>(self.name))[0]
+    def __len__ (self):
+        return 32
+    def __cmp__ (self, Name other):
+        cdef int r = memcmp (self.name, other.name, 32)
+        if r < 0:
+            return -1
+        elif r > 0:
+            return 1
+        else:
+            return 0
+    def __int__ (self):
+        cdef int i
+        r = 0
+        for i in range (32):
+            r <<= 8
+            r |= self.name[31-i]
+        return r
+    def __str__ (self):
+        return self.name[:32]
+    def __hex__ (self):
+        return flip_hexify (self.name, 32)
+    def hex (self):
+        return flip_hexify (self.name, 32)        
+    def __repr__ (self):
+        return '<%s>' % (flip_hexify (self.name, 32))
+
+def name_from_hex (s):
+    return Name (s.decode ('hex')[::-1])
 
 # --------------------------------------------------------------------------------
 # hexify
@@ -27,8 +68,7 @@ cdef _hexify (bytes s):
         b[i*2+1] = hexdigits[a[i] & 0xf]
     return o
 
-cdef _flip_hexify (bytes s):
-    cdef int slen = len (s)
+cdef flip_hexify (unsigned char * s, uint32_t slen):
     cdef bytes o = PyBytes_FromStringAndSize (NULL, slen * 2)
     cdef unsigned char * a = s
     cdef unsigned char * b = o
@@ -42,7 +82,7 @@ cdef _flip_hexify (bytes s):
 
 def hexify (bytes s, bint flip=False):
     if flip:
-        return _flip_hexify (s)
+        return flip_hexify (s, len(s))
     else:
         return _hexify (s)
 
@@ -77,7 +117,7 @@ def base58_decode (bytes s):
     return n
 
 # --------------------------------------------------------------------------------
-# codec (well, decoder only right now)
+# codec
 # --------------------------------------------------------------------------------
 
 cdef class pkt:
@@ -159,6 +199,13 @@ cdef class pkt:
         self.need (n)
         r = self.d[self.pos:self.pos+n]
         self.pos += n
+        return r
+
+    cdef Name unpack_name (self):
+        cdef Name r = Name (None)
+        self.need (32)
+        r.set_value (self.d + self.pos)
+        self.pos += 32
         return r
 
     cdef bytes unpack_var_str (self):
@@ -309,16 +356,33 @@ cpdef bytes pack_addr (list addrs):
         result.append (pack_net_addr (addr))
     return b''.join (result)
 
+cpdef bytes pack_getblocks (uint32_t version, list names):
+    cdef Name n
+    # hash count does not include hash_stop (last elem)
+    cdef list r = [pack_u32 (version), pack_var_int (len (names) - 1)]
+    for n in names:
+        r.append (n.name[:32])
+    return b''.join (r)
+
+cpdef bytes pack_getdata (list items):
+    cdef Name n
+    cdef uint32_t kind
+    cdef list r = [pack_var_int (len (items))]
+    for kind, n in items:
+        r.append (pack_u32 (kind))
+        r.append (n.name[:32])
+    return b''.join (r)
+
 cdef class TX:
     cdef public uint32_t version
     cdef public uint32_t lock_time
     cdef public list inputs
     cdef public list outputs
     cdef readonly bytes raw
-    cdef readonly bytes name
+    cdef readonly Name name
 
     cdef unpack_input (self, pkt p):
-        cdef bytes outpoint_hash = p.unpack_str (32)
+        cdef Name outpoint_hash = p.unpack_name()
         cdef uint32_t outpoint_index = p.u32()
         cdef uint64_t script_length = p.unpack_var_int()
         cdef bytes script = p.unpack_str (script_length)
@@ -326,9 +390,10 @@ cdef class TX:
         return ((outpoint_hash, outpoint_index), script, sequence)
 
     cdef pack_input (self, list result, input):
+        cdef Name outpoint_hash
         (outpoint_hash, outpoint_index), script, sequence = input
         result.extend ([
-            outpoint_hash,
+            outpoint_hash.name[:32],
             pack_u32 (outpoint_index),
             pack_var_int (len (script)),
             script,
@@ -393,19 +458,19 @@ cdef class TX:
         return self.unpack0 (pkt (data))
 
     def get_name (self):
-        return _flip_hexify (dhash (self.raw))
+        return Name (dhash (self.raw))
 
 cdef class BLOCK:
     cdef public uint32_t version
     # XXX consider putting these here as char x[32]
-    cdef public bytes prev_block
-    cdef public bytes merkle_root
+    cdef public Name prev_block
+    cdef public Name merkle_root
     cdef public uint32_t timestamp
     cdef public uint32_t bits    
     cdef public uint32_t nonce
     cdef public list transactions
     cdef readonly bytes raw
-    cdef readonly bytes name
+    cdef readonly Name name
     
     def make_TX (self):
         return TX()
@@ -416,8 +481,8 @@ cdef class BLOCK:
         cdef TX tx
         self.raw = data
         self.version = p.u32()
-        self.prev_block = _flip_hexify (p.unpack_str (32))
-        self.merkle_root = p.unpack_str (32)
+        self.prev_block = p.unpack_name()
+        self.merkle_root = p.unpack_name()
         self.timestamp = p.u32()
         self.bits = p.u32()
         self.nonce = p.u32()
@@ -432,14 +497,14 @@ cdef class BLOCK:
 
     def get_name (self):
         cdef bytes header = self.raw[:80]
-        return _flip_hexify (dhash (header))
+        return Name (dhash (header))
 
 def unpack_block_header (bytes data):
     cdef pkt p = pkt (data)
     raw = data
     version = p.u32()
-    prev_block = p.unpack_str (32)
-    merkle_root = p.unpack_str (32)
+    prev_block = p.unpack_name()
+    merkle_root = p.unpack_name()
     timestamp = p.u32()
     bits = p.u32()
     nonce = p.u32()
@@ -467,7 +532,7 @@ def unpack_inv (data):
     cdef int i
     for i in range (count):
         obj_id = p.u32()
-        obj_hash = p.unpack_str (32)
+        obj_hash = p.unpack_name()
         result.append ((obj_id, obj_hash))
     return result
 
