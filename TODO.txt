@@ -8,6 +8,7 @@ NOTES
 * bootstrap.dat (choose one of the three options)
 * use html_help module.
 * proper package installation and directory for blocks.bin etc...
+* investigate using our own copy of ripemd160 (using the one in 'hashlib' is a back-door openssl dep.)
 
 ledger
 ======
