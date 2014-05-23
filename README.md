@@ -176,6 +176,9 @@ fetch a block by number::
     >>> db.num_block[135000]
     set([<00000000000001bf349e3e8195f95a080ea17efe012cf7f512664829f9d3772d>])
 
+    >>> db.by_num(135000)
+    <__main__.BLOCK object at 0x800f090d0>
+
 dump all its transactions::
 
     >>> for tx in b.transactions:
