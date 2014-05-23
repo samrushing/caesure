@@ -7,6 +7,7 @@ NOTES
 * hardening.
 * bootstrap.dat (choose one of the three options)
 * use html_help module.
+* proper package installation and directory for blocks.bin etc...
 
 ledger
 ======
