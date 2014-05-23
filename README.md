@@ -11,7 +11,6 @@ requirements
   1. [shrapnel](https://github.com/ironport/shrapnel)
      Note: shrapnel needs Cython in order to build.
 
-
 name
 ----
 
@@ -22,20 +21,29 @@ It's a pun on the words Caesar and Seizure.  "Render unto Caesar..."
 status
 ------
 
+Handles incoming & outgoing connections, does parallel blockchain download.  Caches metadata for quick
+startup.
+
+Still needed:
+
+  * the in-memory ledger
+  * hardening
+
+design
+------
+
 Since this uses shrapnel, it leaves out Windows users, but still allows bsd, darwin/osx, & linux.
 
-The target machines are well-connected machines (i.e., in a co-lo) with lots of fast disk and memory.
+The target platform is a well-connected machine (i.e., in a co-lo facility) with fast disk and lots of memory.
 [XXX place hard memory requirements here]
 
-In addition to the port to shrapnel, some performance-sensitive code is being moved
-to cython, including packet codec, b58, hexify, etc...
+Performance-sensitive code is written in Cython, including packet codec, b58, hexify, etc...
 
-Script engine is mostly done.  Needs some work on failing constraints
-like stack size, sig count, etc.
+The script engine is mostly done.  Needs some work on failing constraints like stack size, sig count, etc.
 
 The current plan is to have a pruning ledger in memory (with journalling-style checkpoints to disk).
 Without a ledger, this code is not a full forwarding node, and thus by default the 'relay' flag in
-the version packet is set to False.
+the outgoin version packet is set to False.
 
 See TODO.txt & ledger.py for details.
 
@@ -67,7 +75,11 @@ Connecting to a local bitcoind::
 
 Start up a node with 20 outgoing connections and 0 incoming (i.e., no server)::
 
-    $ python server.py -o 20 -i 0 -c 54.215.208.221:8333 -m -a
+    $ python server.py -o 20 -i 0 -c -m -a
+
+Start up a node with 100 outgoing connections and 100 incoming::
+
+    $ python server.py -o 100 -i 100 -m -a
 
 Once up and running, caesure will start downloading the block chain from the network if necessary.
 
@@ -75,7 +87,7 @@ You can monitor its progress via the web ui:
 
     http://127.0.0.1:8380/admin/status
 
-Or via the back door:
+Or via the back door / monitor:
 
 [from another terminal]
 
@@ -100,6 +112,15 @@ you'll get a python prompt:
     66029
     >>> 
     [...]
+
+bootstrap.dat
+-------------
+
+I recommend that you download the blockchain bootstrap.dat file (via bit torrent), and use that as your starting point.
+The format of the bootstrap.dat file is nearly identical to caesure's native format, and can be converted in-place::
+
+    $ python convert_bootstrap.py bootstrap.dat
+    $ mv bootstrap.dat blocks.bin
 
 testnet
 -------
@@ -161,3 +182,4 @@ dump all its transactions::
     ...     tx.dump()
     ... 
 
+Note: you can also do all the above via the back door of a running caesure instance.
