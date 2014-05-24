@@ -53,7 +53,11 @@ def is_checkmultisig (x):
     return x[0] == 3 and x[1] == OPCODES.OP_CHECKMULTISIG
 
 def is_normal_tx (s):
-    if len(s) == 5 and s[0] == (2, OPCODES.OP_DUP) and s[1] == (2, OPCODES.OP_HASH160) and s[-2] == (2, OPCODES.OP_EQUALVERIFY) and is_check (s[-1]):
+    if (len(s) == 5
+            and s[0] == (2, OPCODES.OP_DUP)
+            and s[1] == (2, OPCODES.OP_HASH160)
+            and s[-2] == (2, OPCODES.OP_EQUALVERIFY)
+            and is_check (s[-1])):
         return 'normal', key_to_address (s[2][1])
     else:
         return None
@@ -65,7 +69,11 @@ def is_pubkey_tx (s):
         return None
 
 def is_p2sh_tx (s):
-    if len(s) == 3 and s[0] == (2, OPCODES.OP_HASH160) and s[2] == (2, OPCODES.OP_EQUAL) and s[1][0] == 0 and len(s[1][1]) == 20:
+    if (len(s) == 3
+            and s[0] == (2, OPCODES.OP_HASH160)
+            and s[2] == (2, OPCODES.OP_EQUAL)
+            and s[1][0] == 0
+            and len(s[1][1]) == 20):
         return 'p2sh', key_to_address (s[1][1], 5)
 
 OP_NUMS = {}
@@ -80,13 +88,13 @@ def is_multi_tx (s):
         if n0 is None or n1 is None:
             return None
         elif n1 == (len(s) - 3):
-            for i in range (1, 1+n1):
+            for i in range (1, 1 + n1):
                 if not s[i][0] == 0:
                     return None
             val = '%d/%d:%s' % (
                 n0,
                 n1,
-                '/'.join ([key_to_address (rhash (s[i][1])) for i in range (1, 1+n1)])
+                '/'.join ([key_to_address (rhash (s[i][1])) for i in range (1, 1 + n1)])
             )
             return 'multi', val
         else:
@@ -112,7 +120,7 @@ class Transaction_Map:
             self.total = 0
             self.lost = 0
             self.fees = 0
-            self.tx_kinds = {'normal':0, 'pubkey':0, 'p2sh':0, 'multi':0, 'other':0}
+            self.tx_kinds = {'normal': 0, 'pubkey': 0, 'p2sh': 0, 'multi': 0, 'other': 0}
 
     def save_state (self):
         cPickle.dump (self.outpoints, open ('/usr/local/bitcoin/outpoints.bin', 'wb'), 2)
@@ -134,7 +142,7 @@ class Transaction_Map:
             v = self.monies.get (addr, 0)
             if v:
                 v0 = v - amt
-                if v0 == 0: 
+                if v0 == 0:
                     del self.monies[addr]
                 else:
                     self.monies[addr] = v0
@@ -144,7 +152,7 @@ class Transaction_Map:
                 pass
         else:
             W ('sub_from_addr %r %r failed\n' % (addr, amt))
-            
+
     def get_output_addr (self, tx_name, pk_script):
         if len(pk_script) > 500:
             # don't bother to parse/remember silly scripts
@@ -241,7 +249,7 @@ def go():
         elif i <= txmap.height:
             pass
         else:
-            W ('oops, block too high?\n')                
+            W ('oops, block too high?\n')
             import pdb; pdb.set_trace()
         i += 1
         coro.yield_slice()
@@ -262,7 +270,7 @@ db = BlockDB (read_only=True)
 bitcoin.the_block_db = db
 txmap = Transaction_Map()
 
-if not '-c' in sys.argv:
+if '-c' not in sys.argv:
 
     import coro
     import coro.backdoor

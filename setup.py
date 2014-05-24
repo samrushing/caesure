@@ -7,7 +7,7 @@ from Cython.Distutils import build_ext
 exts = [
     Extension ('caesure.proto', ['caesure/proto.pyx']),
     Extension ('caesure._script', ['caesure/_script.pyx']),
-    ]
+]
 
 setup (
     name             = 'caesure',
@@ -19,4 +19,4 @@ setup (
     install_requires = ['cython>=0.18'],
     license          = 'Simplified BSD',
     cmdclass = {'build_ext': build_ext},
-    )
+)

@@ -24,7 +24,7 @@ class OPCODES:
     OP_1NEGATE = 0x4f
     OP_RESERVED = 0x50
     OP_1 = 0x51
-    OP_TRUE=OP_1
+    OP_TRUE = OP_1
     OP_2 = 0x52
     OP_3 = 0x53
     OP_4 = 0x54
@@ -187,10 +187,10 @@ def unrender_int (s):
     n = 0
     ls = len(s)
     neg = False
-    for i in range (ls-1,-1,-1):
+    for i in range (ls - 1, -1, -1):
         b = ord (s[i])
         n <<= 8
-        if i == ls-1 and b & 0x80:
+        if i == ls - 1 and b & 0x80:
             neg = True
             n |= b & 0x7f
         else:
@@ -219,7 +219,7 @@ def make_push_int (n):
     elif n == 1:
         return chr(OP_1)
     elif n >= 2 and n <= 16:
-        return chr(80+n)
+        return chr(80 + n)
     else:
         return make_push_str (render_int (n))
 
@@ -255,7 +255,7 @@ class script_parser:
         return result
 
     def get_str (self, n=1):
-        result = self.s[self.pos:self.pos+n]
+        result = self.s[self.pos:self.pos + n]
         self.pos += n
         if len(result) != n:
             raise ScriptUnderflow (self.pos)
@@ -393,8 +393,8 @@ def is_true (v):
     # check against the two forms of ZERO
     return v not in ('', '\x80')
 
-lo32 = -(2**31)
-hi32 = (2**31)-1
+lo32 = -(2 ** 31)
+hi32 = (2 ** 31) - 1
 
 def check_int (n):
     if not (lo32 <= n <= hi32):
@@ -405,7 +405,7 @@ class machine:
     def __init__ (self):
         self.stack = []
         self.altstack = []
-        
+
     def clear_alt (self):
         self.altstack = []
 
@@ -471,7 +471,7 @@ class verifying_machine (machine):
         sig = self.pop()
         s0 = parse_script (s)
         s1 = remove_codeseps (s0)
-        s2 = remove_sigs (s1, [sig]) # rare?
+        s2 = remove_sigs (s1, [sig])  # rare?
         s3 = unparse_script (s2)
         return self.check_one_sig (pub_key, sig, s3)
 
@@ -493,12 +493,12 @@ class verifying_machine (machine):
         nsig = self.pop_int()
         #print 'nsig=', nsig
         sigs = [self.pop() for x in range (nsig)]
-        
+
         s0 = parse_script (s)
         s1 = remove_codeseps (s0)
-        s2 = remove_sigs (s1, sigs) # rare?
+        s2 = remove_sigs (s1, sigs)  # rare?
         s3 = unparse_script (s2)
-        
+
         for sig in sigs:
             nmatch = 0
             #print 'checking sig...'
@@ -639,21 +639,21 @@ def do_substr (m):
     s = m.pop()
     if not (n > 0 and n < len (s)):
         raise ScriptFailure
-    if not (p >= 0 and p < (len(s)-1)):
+    if not (p >= 0 and p < (len(s) - 1)):
         raise ScriptFailure
-    m.push (s[p:p+n])
+    m.push (s[p:p + n])
 def do_left (m):
     m.need (2)
     n = m.pop_int()
     s = m.pop()
-    if n < 0 or n > (len(s)-1):
+    if n < 0 or n > (len(s) - 1):
         raise ScriptFailure
     m.push (s[0:n])
 def do_right (m):
     m.need (2)
     n = m.pop_int()
     s = m.pop()
-    if n < 0 or n > (len(s)-1):
+    if n < 0 or n > (len(s) - 1):
         raise ScriptFailure
     m.push (s[n:])
 def do_size (m):
@@ -670,7 +670,7 @@ def do_2mul (m):
     m.push_int (2 * m.pop_int())
 def do_2div (m):
     m.need (1)
-    m.push_int (m.pop_int()>>1)
+    m.push_int (m.pop_int() >> 1)
 def do_negate (m):
     m.need (1)
     m.push_int (-m.pop_int())
@@ -818,7 +818,7 @@ do_nop7 = do_nop1
 do_nop8 = do_nop1
 do_nop9 = do_nop1
 do_nop10 = do_nop1
-    
+
 # these will probably be done inline when the eval engine is moved into cython
 def do_1 (m):
     m.push_int (1)
@@ -858,7 +858,7 @@ def do_16 (m):
 disabled = set ([
     OP_CAT, OP_SUBSTR, OP_LEFT, OP_RIGHT, OP_INVERT, OP_AND, OP_OR, OP_XOR,
     OP_2MUL, OP_2DIV, OP_MUL, OP_DIV, OP_MOD, OP_LSHIFT, OP_RSHIFT,
-    ])
+])
 
 op_funs = {}
 g = globals()

@@ -5,7 +5,7 @@ def elem (name, props, close=False, empty=False):
     if close:
         r.append ('</%s' % (name,))
     else:
-        r.append ('\n<%s' % (name,))        
+        r.append ('\n<%s' % (name,))
     for kw, kv in props.iteritems():
         if kw == 'klass':
             kw = 'class'
@@ -20,7 +20,7 @@ def elem (name, props, close=False, empty=False):
 def elem0 (_name, **props):
     return elem (_name, props, close=False)
 def elem1 (_name, **props):
-    return elem (_name, props, close=True)    
+    return elem (_name, props, close=True)
 def elems1 (*_names):
     return ''.join (['</%s>' % name for name in _names])
 def elemz (_name, **props):

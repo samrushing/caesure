@@ -15,20 +15,25 @@ from pdb import set_trace as trace
 from pprint import pprint as pp
 
 class variable:
+
     # creates a binding
     def __init__ (self, name):
         self.name = name
+
     def __repr__ (self):
         return '<%s>' % (self.name,)
 
 class literal:
+
     # matches a literal
     def __init__ (self, value):
         self.value = value
         if is_a (value, VAR):
             import pdb; pdb.set_trace()
+
     def __repr__ (self):
         return 'L%s' % (repr(self.value))
+
     def __cmp__ (self, other):
         if is_a (other, literal):
             v = self.value
@@ -39,13 +44,16 @@ class literal:
             return -1
 
 class constructor:
+
     # matches a constructor
     def __init__ (self, name, subs):
         self.datatype, self.alt = name.split (':')
         self.subs = subs
+
     def __len__ (self):
         # arity of this constructor
         return len (self.subs)
+
     def __repr__ (self):
         return '(%s/%s %s)' % (self.datatype, self.alt, ' '.join ([repr(x) for x in self.subs]))
 
@@ -62,7 +70,7 @@ ERROR = ['%%match-error']
 # The next step in this code is to try to optimize the generated tree, which should be a matter of
 #   using heuristics to pick which pattern out of several to begin with.  This code always starts
 #   with the left-most pattern, and descends recursively; see first_pats_are() below.
-    
+
 class compiler:
 
     def __init__ (self, context):
@@ -85,10 +93,10 @@ class compiler:
             assert (len(pats) == npats)
         rules0 = []
         for pats, code in rules:
-            kinds = [ self.kind (x) for x in pats ]
+            kinds = [self.kind (x) for x in pats]
             rules0.append ((kinds, code))
         return vars, self.match (vars, rules0, ERROR)
-            
+
     def kind (self, p):
         if is_a (p, list) or is_a (p, tuple):
             if is_a (p, list):
@@ -100,7 +108,7 @@ class compiler:
                 return constructor ('%s:nil' % what, [])
             elif is_a (p[0], list) and p[0][0] == 'colon' and len(p[0]) == 3:
                 # a constructor
-                return constructor ('%s:%s' % (p[0][1], p[0][2]), [self.kind (x) for x in  p[1:]])
+                return constructor ('%s:%s' % (p[0][1], p[0][2]), [self.kind (x) for x in p[1:]])
             else:
                 # (a b . c) => (list:cons ...)
                 # XXX create a metavariable for this dot
@@ -212,8 +220,8 @@ class compiler:
                 arity = dt.arity (alt)
             else:
                 arity = self.get_arity (rules0)
-            vars0 = [ self.gensym() for x in range (arity) ]
-            wild  = [ True for x in vars0 ]
+            vars0 = [self.gensym() for x in range (arity)]
+            wild  = [True for x in vars0]
             rules1 = []
             for pats, code in rules0:
                 rules1.append ((pats[0].subs + pats[1:], code))
@@ -231,7 +239,7 @@ class compiler:
                     vars1[i] = '_'
             cases.append (
                 [[['colon', None, alt]] + vars1, self.match (vars0 + vars[1:], rules1, default0)]
-                )
+            )
         if dt:
             if len(alts) < len (dt.alts):
                 # an incomplete vcase, stick in an else clause.
@@ -257,7 +265,7 @@ class compiler:
             if pats[0] == last:
                 groups[-1].append ((pats, code))
             else:
-                groups.append ([(pats,code)])
+                groups.append ([(pats, code)])
                 last = pats[0]
         while groups:
             group = groups.pop()
@@ -268,7 +276,7 @@ class compiler:
                        self.match (vars[1:], rules0, default),
                        default]
         return default
-                
+
     def mixture_rule (self, vars, rules, default):
         # partition the rules into runs of either variables or constructors.
         parts = []
@@ -294,18 +302,21 @@ class VAR:
         self.args = args
 
 class Datatype:
+
     def __init__ (self, name, alts):
         self.name = name
         self.alts = alts
+
     def arity (self, alt):
         return self.alts[alt]
 
 class Context:
+
     def __init__ (self):
         self.datatypes = {
-            'list' : Datatype ('list',  {'cons':2, 'nil':0}),
-            'tuple': Datatype ('tuple', {'cons':2, 'nil':0}),
-            }
+            'list': Datatype ('list', {'cons': 2, 'nil': 0}),
+            'tuple': Datatype ('tuple', {'cons': 2, 'nil': 0}),
+        }
 
 if __name__ == '__main__':
     # let's think about how we might use this.
@@ -318,7 +329,7 @@ if __name__ == '__main__':
         ([[0, 1, VAR('X'), 4]], "pat1"),
         ([[VAR('X'), 1]],       "pat2"),
         ([VAR('Y')],            "pat3"),
-        ]
+    ]
     #rules = [
     #    ([[0,1]], "pat0"),
     #    ([VAR('X')], "pat1"),

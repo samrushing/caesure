@@ -37,7 +37,7 @@ def is_routable (addr):
         return not (
             SW ('127.') or SW ('255.') or SW ('0.') or SW ('10.')
             or SW ('192.168.') or SW ('172.16.') or SW ('169.254')
-            )
+        )
 
 def secs_since (t0):
     return float (coro.now - t0) / coro.ticks_per_sec
@@ -58,17 +58,19 @@ def get_random_connection():
     else:
         return None
 
-# Mar 2013 fetched from https://github.com/bitcoin/bitcoin/blob/master/src/net.cpp
+# May 2014 fetched from https://github.com/bitcoin/bitcoin/blob/master/src/chainparams.cpp
 dns_seeds = [
-    "bitseed.xf2.org",
-    "dnsseed.bluematt.me",
     "seed.bitcoin.sipa.be",
+    "dnsseed.bluematt.me",
+    # down?
     #"dnsseed.bitcoin.dashjr.org",
-    ]
-
+    "seed.bitcoinstats.com",
+    "seed.bitnodes.io",
+    "bitseed.xf2.org",
+]
 
 def make_nonce():
-    return random.randint (0, 1<<64L)
+    return random.randint (0, 1 << 64)
 
 class BaseConnection:
 
@@ -107,7 +109,7 @@ class BaseConnection:
             cmd,
             struct.pack ('<II', len(payload), checksum),
             payload
-            ])
+        ])
         W ('>%s>' % (command,))
 
     def get_our_block_height (self):
@@ -224,7 +226,7 @@ class BlockHoover:
                 if len(pairs) and all (x[0] == bitcoin.OBJ_BLOCK for x in pairs):
                     # yup, that's what we were waiting for...
                     for _, name in pairs:
-                        if not name in self.qset and name not in the_block_db.blocks:
+                        if name not in self.qset and name not in the_block_db.blocks:
                             self.queue.push (name)
                             self.qset.add (name)
                     return
@@ -267,7 +269,7 @@ class BlockHoover:
                     break
             else:
                 break
-        
+
     def block_to_db (self, name, b):
         try:
             b.check_rules()
@@ -389,7 +391,7 @@ class Connection (BaseConnection):
                 r.append ((
                     ticks_to_sec (v.last_packet),
                     (v.other_version.services, v.other_addr)
-                    ))
+                ))
             # cap it at 100 addresses
             if len(r) >= 100:
                 break
@@ -482,8 +484,8 @@ def status_thread():
             '[clients:%d addr_cache:%d]\n' % (
                 len(the_connection_map),
                 len(the_addr_cache.cache),
-                )
             )
+        )
 
 def new_random_addr():
     for i in range (100):
@@ -576,7 +578,7 @@ def go (args):
             h.push_handler (webadmin.handler())
             coro.spawn (h.start, (('127.0.0.1', 9380)))
         else:
-            h.push_handler (coro.http.handlers.auth_handler ({'foo':'bar'}, webadmin.handler()))
+            h.push_handler (coro.http.handlers.auth_handler ({'foo': 'bar'}, webadmin.handler()))
             coro.spawn (h.start, (('', 8380)))
         h.push_handler (coro.http.handlers.coro_status_handler())
         h.push_handler (coro.http.handlers.favicon_handler (zlib.compress (webadmin.favicon)))
@@ -609,7 +611,7 @@ if __name__ == '__main__':
     p.add_argument ('-s', '--serve', action="append", help="serve on this address", metavar='IP:PORT')
     p.add_argument ('-c', '--connect', action="append", help="connect to this address", metavar='IP:PORT')
     p.add_argument ('-m', '--monitor', action='store_true', help='run the monitor on /tmp/caesure.bd')
-    p.add_argument ('-a', '--webadmin', action='store_true', help='run the web admin interface at http://localhost:8380/admin/')
+    p.add_argument ('-a', '--webui', action='store_true', help='run the web interface at http://localhost:8380/admin/')
     args = p.parse_args()
     coro.spawn (go, args)
     coro.event_loop()

@@ -39,7 +39,7 @@ favicon = (
     '////AP///wD///8A7/HxD7/P10dSruDVPqbg7mSdu7NKrOHecrrirejr7Rf///8A////AP///wD/'
     '//8A/B8AAOAPAADgBwAAgAMAAIABAAAAAQAAAAEAAAAAAAAAAAAAAAEAAIABAACAAQAAgAMAAOAH'
     'AADwDwAA/B8AAA=='
-    ).decode ('base64')
+).decode ('base64')
 
 from __main__ import *
 
@@ -89,7 +89,11 @@ def is_checkmultisig (x):
     return x[0] == 3 and x[1] == OPCODES.OP_CHECKMULTISIG
 
 def is_normal_tx (s):
-    if len(s) == 5 and s[0] == (2, OPCODES.OP_DUP) and s[1] == (2, OPCODES.OP_HASH160) and s[-2] == (2, OPCODES.OP_EQUALVERIFY) and is_check (s[-1]):
+    if (len(s) == 5
+            and s[0] == (2, OPCODES.OP_DUP)
+            and s[1] == (2, OPCODES.OP_HASH160)
+            and s[-2] == (2, OPCODES.OP_EQUALVERIFY)
+            and is_check (s[-1])):
         return 'normal', key_to_address (s[2][1])
     else:
         return None
@@ -101,7 +105,11 @@ def is_pubkey_tx (s):
         return None
 
 def is_p2sh_tx (s):
-    if len(s) == 3 and s[0] == (2, OPCODES.OP_HASH160) and s[2] == (2, OPCODES.OP_EQUAL) and s[1][0] == 0 and len(s[1][1]) == 20:
+    if (len(s) == 3
+            and s[0] == (2, OPCODES.OP_HASH160)
+            and s[2] == (2, OPCODES.OP_EQUAL)
+            and s[1][0] == 0
+            and len(s[1][1]) == 20):
         return 'p2sh', key_to_address (s[1][1], 5)
 
 OP_NUMS = {}
@@ -116,13 +124,13 @@ def is_multi_tx (s):
         if n0 is None or n1 is None:
             return None
         elif n1 == (len(s) - 3):
-            for i in range (1, 1+n1):
+            for i in range (1, 1 + n1):
                 if not s[i][0] == 0:
                     return None
             val = '%d/%d:%s' % (
                 n0,
                 n1,
-                '\n'.join ([key_to_address (rhash (s[i][1])) for i in range (1, 1+n1)])
+                '\n'.join ([key_to_address (rhash (s[i][1])) for i in range (1, 1 + n1)])
             )
             return 'multi', val
         else:
@@ -177,7 +185,7 @@ class handler:
     safe_cmd = re.compile ('[a-z]+')
 
     def handle_request (self, request):
-        parts = request.path.split ('/')[2:] # ignore ['', 'admin']
+        parts = request.path.split ('/')[2:]
         subcmd = parts[0]
         if not subcmd:
             subcmd = 'status'
@@ -188,12 +196,12 @@ class handler:
             method = getattr (self, method_name)
             request.push (
                 '\r\n'.join ([
-                        '<html><head>',
-                        css,
-                        '</head><body>',
-                        '<h1>caesure admin</h1>',
-                        ])
-                )
+                    '<html><head>',
+                    css,
+                    '</head><body>',
+                    '<h1>caesure admin</h1>',
+                ])
+            )
             self.menu (request)
             try:
                 method (request, parts)
@@ -217,7 +225,7 @@ class handler:
             '&nbsp;&nbsp;<a href="/admin/send/">send</a>'
             '&nbsp;&nbsp;<a href="/admin/connect/">connect</a>'
             '&nbsp;&nbsp;<a href="/admin/shutdown/">shutdown</a>'
-            )
+        )
 
     def cmd_status (self, request, parts):
         db = the_block_db
@@ -257,7 +265,7 @@ class handler:
             self.dump_tx (request, b.transactions[i], i)
         RP ('</table>')
         #RP ('</pre>')
-        
+
     def cmd_block (self, request, parts):
         db = the_block_db
         RP = request.push
@@ -368,36 +376,3 @@ class handler:
         request.done()
         coro.sleep_relative (1)
         coro.set_exit()
-
-def chain_gen (name):
-    db = the_block_db
-    while 1:
-        if db.next.has_key (name):
-            names = db.next[name]
-            if len(names) > 1:
-                for x in longest (names):
-                    yield 1
-            else:
-                name = list(names)[0]
-                yield 1
-        else:
-            break
-
-def longest (names):
-    gens = [ (name, chain_gen (name)) for name in list (names) ]
-    ng = len (gens)
-    left = ng
-    n = 0
-    while left > 1:
-        for i in range (ng):
-            if gens[i]:
-                name, gen = gens[i]
-                try:
-                    gen.next()
-                except StopIteration:
-                    gens[i] = None
-                    left -= 1
-        n += 1
-    [(name, _)] = [x for x in gens if x is not None]
-    return name, n
-

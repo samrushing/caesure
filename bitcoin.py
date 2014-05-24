@@ -5,7 +5,7 @@
 # Author: Sam Rushing. http://www.nightmare.com/~rushing/
 # July 2011 - May 2014
 #
-# because we can have forks/orphans, 
+# because we can have forks/orphans,
 # num->block is 1->N and block->num is 1->1
 #
 import copy
@@ -82,7 +82,7 @@ def key_to_address (s, version=0):
             break
     return ('1' * pad) + encoded
 
-h160_mask = (1<<(8*20))-1
+h160_mask = (1 << (8 * 20)) - 1
 
 def address_to_key (s):
     n = base58_decode (s)
@@ -99,8 +99,10 @@ def address_to_key (s):
     return v, h160
 
 class timer:
+
     def __init__ (self):
         self.start = time.time()
+
     def end (self):
         return time.time() - self.start
 
@@ -199,37 +201,6 @@ class TX (caesure.proto.TX):
         #print 'ecdsa verify...', r
         return r
 
-def read_ip_addr (s):
-    r = socket.inet_ntop (socket.AF_INET6, s)
-    if r.startswith ('::ffff:'):
-        return r[7:]
-    else:
-        return r
-
-def pack_ip_addr (addr):
-    # only v4 right now
-    # XXX this is probably no longer true, the dns seeds are returning v6 addrs
-    return socket.inet_pton (socket.AF_INET6, '::ffff:%s' % (addr,))
-
-def pack_var_int (n):
-    if n < 0xfd:
-        return chr(n)
-    elif n < 1<<16:
-        return '\xfd' + struct.pack ('<H', n)
-    elif n < 1<<32:
-        return '\xfe' + struct.pack ('<I', n)
-    else:
-        return '\xff' + struct.pack ('<Q', n)
-
-def pack_var_str (s):
-    return pack_var_int (len (s)) + s
-
-def pack_inv (pairs):
-    result = [pack_var_int (len(pairs))]
-    for objid, hash in pairs:
-        result.append (struct.pack ('<I32s', objid, hash))
-    return ''.join (result)
-
 class BadBlock (Exception):
     pass
 
@@ -249,8 +220,8 @@ class BLOCK (caesure.proto.BLOCK):
                 self.timestamp,
                 self.bits,
                 self.nonce
-                )
             )
+        )
         for i in range (len (self.transactions)):
             fout.write ('tx %d {\n' % (i,))
             self.transactions[i].dump (fout)
@@ -269,7 +240,7 @@ class BLOCK (caesure.proto.BLOCK):
             # Note: we can't use parse_script here because coinbases are *not*
             #  guaranteed to be proper scripts.  At least yet.
             nbytes = ord(script[0])
-            height = unrender_int (script[1:1+nbytes])
+            height = unrender_int (script[1:1 + nbytes])
             return height
 
     def make_TX (self):
@@ -290,7 +261,7 @@ class BLOCK (caesure.proto.BLOCK):
                 hl.append (hl[-1])
             hl0 = []
             for i in range (0, len (hl), 2):
-                hl0.append (dhash (hl[i] + hl[i+1]))
+                hl0.append (dhash (hl[i] + hl[i + 1]))
             hl = hl0
 
     # see https://en.bitcoin.it/wiki/Protocol_rules
@@ -352,7 +323,7 @@ class BlockDB:
         path = os.path.join ('blocks', name)
         return open (path).read (80)
 
-    metadata_flush_time = 5 * 60 * 60 # five hours
+    metadata_flush_time = 5 * 60 * 60              # five hours
 
     def metadata_thread (self):
         while 1:
@@ -370,7 +341,7 @@ class BlockDB:
                 [str(a), pos, self.block_num[a], str(self.prev[a])],
                 fileob,
                 2
-                )
+            )
         fileob.close()
         os.rename (METADATA_PATH + '.tmp', METADATA_PATH)
         W ('done %.2f secs\n' % (t0.end(),))
@@ -419,7 +390,7 @@ class BlockDB:
                 (version, prev_block, merkle_root,
                  timestamp, bits, nonce) = unpack_block_header (header)
                 # skip the rest of the block
-                file.seek (size-80, 1)
+                file.seek (size - 80, 1)
                 name = Name (dhash (header))
                 bn = 1 + self.block_num[prev_block]
                 self.prev[name] = prev_block
@@ -441,7 +412,7 @@ class BlockDB:
         self.file = open (BLOCKS_PATH, 'ab')
 
     def get_block (self, name):
-        pos =  self.blocks[name]
+        pos = self.blocks[name]
         self.read_only_file.seek (pos)
         size = self.read_only_file.read (8)
         size, = struct.unpack ('<Q', size)
@@ -485,9 +456,9 @@ class BlockDB:
             i = -1
         else:
             i = self.block_num[block.prev_block]
-        self.block_num[name] = i+1
-        self.num_block.setdefault (i+1, set()).add (name)
-        self.last_block = i+1
+        self.block_num[name] = i + 1
+        self.num_block.setdefault (i + 1, set()).add (name)
+        self.last_block = i + 1
 
     def has_key (self, name):
         return self.prev.has_key (name)
