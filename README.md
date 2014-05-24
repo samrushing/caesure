@@ -66,8 +66,7 @@ $ python server.py -h::
       -c IP:PORT, --connect IP:PORT
                             connect to this address
       -m, --monitor         run the monitor on /tmp/caesure.bd
-      -a, --webadmin        run the web admin interface at
-                            http://localhost:8380/admin/
+      -a, --webui           run the web interface at http://localhost:8380/admin/
 
 Connecting to a local bitcoind::
 
