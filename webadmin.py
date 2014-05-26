@@ -234,14 +234,16 @@ class handler:
         RP ('hash[es]: %s' % (escape (repr (db.num_block[db.last_block]))))
         RP ('<br>num: %d' % (db.last_block,))
         RP ('<h3>connections</h3>')
-        RP ('<table><thead><tr><th>packets</th><th>address</th><th>version</th></tr></thead>')
+        RP ('<table><thead><tr><th>#</th><th>packets</th><th>address</th><th>version</th></tr></thead>')
+        i = 1
         for addr, conn in the_connection_map.iteritems():
             ip, port = conn.other_addr
             if conn.other_version is not None:
                 v = conn.other_version.sub_version_num
             else:
                 v = 'N/A'
-            RP ('<tr><td>%d</td><td>%s:%d</td><td>%s</td></tr>' % (conn.packet_count, ip, port, v))
+            RP ('<tr><td>%d</td><td>%d</td><td>%s:%d</td><td>%s</td></tr>' % (i, conn.packet_count, ip, port, v))
+            i += 1
         RP ('</table><hr>')
 
     def dump_block (self, request, b, num, name):
@@ -286,8 +288,8 @@ class handler:
                 RP ('&nbsp;&nbsp;<a href="/admin/block/%064x">Prev Block</a>' % (db.prev[name],))
             else:
                 RP ('&nbsp;&nbsp;Prev Block<br>')
-            if db.num_block.has_key (num):
-                names = list (db.num_block[num])
+            if db.num_block.has_key (num + 1):
+                names = list (db.num_block[num + 1])
                 if len(names) > 1:
                     longer, length = longest (names)
                     for i in range (len (names)):
