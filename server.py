@@ -577,9 +577,9 @@ def go (args):
         import webadmin
         import zlib
         h = coro.http.server()
-        if False:
+        if True:
             h.push_handler (webadmin.handler())
-            coro.spawn (h.start, (('127.0.0.1', 9380)))
+            coro.spawn (h.start, (('127.0.0.1', 8380)))
         else:
             h.push_handler (coro.http.handlers.auth_handler ({'foo': 'bar'}, webadmin.handler()))
             coro.spawn (h.start, (('', 8380)))
