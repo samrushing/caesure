@@ -193,6 +193,9 @@ class BlockHoover:
 
     def go (self):
         # main hoovering thread.
+        if the_block_db.last_block == 0:
+            self.queue.push_front (bitcoin.genesis_block_hash)
+            self.qset.add (bitcoin.genesis_block_hash)
         try:
             self.running = True
             while the_block_db.last_block < self.target:
@@ -569,7 +572,7 @@ def go (args):
     if args.monitor:
         import coro.backdoor
         coro.spawn (coro.backdoor.serve, unix_path='/tmp/caesure.bd')
-    if args.webadmin:
+    if args.webui:
         import coro.http
         import webadmin
         import zlib
