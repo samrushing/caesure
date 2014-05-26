@@ -1,7 +1,7 @@
 -*- Mode: rst -*-
 
-NOTES
------
+TODO
+----
 
 * ledger: [optional, for full forwarding node] live pruning ledger in memory.
 * hardening.
@@ -9,6 +9,7 @@ NOTES
 * use html_help module.
 * proper package installation and directory for blocks.bin etc...
 * investigate using our own copy of ripemd160 (using the one in 'hashlib' is a back-door openssl dep.)
+* sanity check hashes of known blocks
 
 ledger
 ======
