@@ -210,13 +210,13 @@ class BLOCK (caesure.proto.BLOCK):
         fout.write (
             'version:%d\n'
             'prev_block:%s\n'
-            'merkle_root:%s\n'
+            'merkle_root:%r\n'
             'timestamp:%s\n'
             'bits:%08x\n'
             'nonce:%d\n' % (
                 self.version,
                 self.prev_block,
-                self.merkle_root.encode('hex'),
+                self.merkle_root,
                 self.timestamp,
                 self.bits,
                 self.nonce
@@ -431,6 +431,19 @@ class BlockDB:
     def by_num (self, num):
         # fetch *one* of the set, beware all callers of this
         return self[list(self.num_block[num])[0]]
+
+    def next (self, name):
+        # synthesize a name->successor[s] map
+        num = self.block_num[name]
+        probe = self.num_block.get (num + 1, None)
+        if probe is not None:
+            r = []
+            for name0 in probe:
+                if self[name0].prev_block == name:
+                    r.append (name0)
+            return r
+        else:
+            return set()
 
     def add (self, name, block):
         if self.blocks.has_key (name):
