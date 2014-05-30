@@ -55,11 +55,10 @@ def trow (*vals):
     return ''.join (r)
 
 def thead (*cols):
-    r = []
-    r.append ('<thead><tr>')
+    r = [elem0 ('thead'), elem0 ('tr'),]
     for col in cols:
-        r.append ('<th>%s</th>' % (col,))
-    r.append ('</tr></thead>\n')
+        r.append (wrap1 ('th', col))
+    r.append (elems1 ('tr', 'thead'))
     return ''.join (r)
 
 def autotable (rows, use_classy_rows=False, **props):
@@ -81,3 +80,6 @@ def autorow (cols, **props):
 
 def overline (text):
     return wrap1 ('font', text, style='text-decoration: overline;')
+
+def ent (name):
+    return '&%s;' % (name,)
