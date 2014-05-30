@@ -44,7 +44,6 @@ favicon = (
 from __main__ import *
 
 css = """
-<style type="text/css">
 body { font-family: monospace; }
 tr:nth-child(odd) {
   background-color:#f0f0f0;
@@ -58,8 +57,22 @@ tr:nth-child(even) {
   width:20em;
   display:block;
 }
-</style>
 """
+
+class OutputBuffer:
+    def __init__ (self, request):
+        self.request = request
+        self.data = []
+        self.size = 0
+    def push (self, *items):
+        self.data.extend (items)
+        self.size += sum (len (x) for x in items)
+        if self.size > 8000:
+            self.flush()
+    def flush (self):
+        data, self.data = self.data, []
+        self.request.push (''.join (data))
+        self.size = 0
 
 def shorten (s, w=20):
     if len(s) > w:
@@ -194,47 +207,52 @@ class handler:
             request['content-type'] = 'text/html'
             request.set_deflate()
             method = getattr (self, method_name)
-            request.push (
-                '\r\n'.join ([
-                    '<html><head>',
-                    css,
-                    '</head><body>',
-                    '<h1>caesure admin</h1>',
-                ])
+            OB = OutputBuffer (request)
+            PUSH = OB.push
+            PUSH (
+                elem0 ('html'),
+                wrap1 ('head', wrap1 ('style', css, type='text/css')),
+                elem0 ('body'),
+                wrap1 ('h1', 'caesure admin'),
             )
-            self.menu (request)
+            self.menu (PUSH)
             try:
-                method (request, parts)
+                method (request, PUSH, parts)
             except SystemExit:
                 raise
             except:
                 request.push ('<h1>something went wrong</h1>')
                 request.push ('<pre>%r</pre>' % (coro.compact_traceback(),))
-            request.push ('<hr>')
-            self.menu (request)
-            request.push ('</body></html>')
+            PUSH (elem0 ('hr'))
+            self.menu (PUSH)
+            PUSH (elems1 ('body', 'html'))
+            OB.flush()
             request.done()
         else:
             request.error (400)
 
-    def menu (self, request):
-        request.push (
-            '&nbsp;&nbsp;<a href="/admin/reload">reload</a>'
-            '&nbsp;&nbsp;<a href="/admin/status">status</a>'
-            '&nbsp;&nbsp;<a href="/admin/block/">blocks</a>'
-            '&nbsp;&nbsp;<a href="/admin/send/">send</a>'
-            '&nbsp;&nbsp;<a href="/admin/connect/">connect</a>'
-            '&nbsp;&nbsp;<a href="/admin/shutdown/">shutdown</a>'
+    def menu (self, PUSH):
+        space = '&nbsp;'
+        space2 = space * 2
+        PUSH (
+            space2 + wrap1 ('a', 'reload', href="/admin/reload"),
+            space2 + wrap1 ('a', 'status', href="/admin/status"),
+            space2 + wrap1 ('a', 'blocks', href="/admin/block"),
+            space2 + wrap1 ('a', 'connect', href="/admin/connect"),
+            space2 + wrap1 ('a', 'shutdown', href="/admin/shutdown"),
         )
 
-    def cmd_status (self, request, parts):
+    def cmd_status (self, request, PUSH, parts):
         db = the_block_db
-        RP = request.push
-        RP ('<h3>last block</h3>')
-        RP ('hash[es]: %s' % (escape (repr (db.num_block[db.last_block]))))
-        RP ('<br>num: %d' % (db.last_block,))
-        RP ('<h3>connections</h3>')
-        RP ('<table><thead><tr><th>#</th><th>packets</th><th>address</th><th>version</th></tr></thead>')
+        PUSH (
+            wrap1 ('h3', 'last block'),
+            'name[s]: %s' % (escape (', '.join ([repr(x) for x in db.num_block[db.last_block]]))),
+            elem0 ('br'),
+            'num: %d' % (db.last_block,),
+            wrap1 ('h3', 'connections'),
+            elem0 ('table'),
+            thead ('#', 'packets', 'address', 'port', 'version'),
+        )
         i = 1
         for addr, conn in the_connection_map.iteritems():
             ip, port = conn.other_addr
@@ -242,39 +260,39 @@ class handler:
                 v = conn.other_version.sub_version_num
             else:
                 v = 'N/A'
-            RP ('<tr><td>%d</td><td>%d</td><td>%s:%d</td><td>%s</td></tr>' % (i, conn.packet_count, ip, port, v))
+            PUSH (trow (i, conn.packet_count, ip, port, v))
             i += 1
-        RP ('</table><hr>')
+        PUSH (elem1 ('table'), elem0 ('hr'))
 
-    def dump_block (self, request, b, num, name):
-        RP = request.push
-        RP ('\r\n'.join ([
-            '<br>block: %d' % (num,),
-            '<br>version: %d' % (b.version,),
-            '<br>name: %064x' % (name,),
-            '<br>prev: %064x' % (b.prev_block,),
-            '<br>merk: %064x' % (b.merkle_root,),
-            '<br>time: %s (%s)' % (b.timestamp, time.ctime (b.timestamp)),
-            '<br>bits: %s' % (b.bits,),
-            '<br>nonce: %s' % (b.nonce,),
-            '<br>txns: %d' % (len(b.transactions),),
-            '<br><a href="http://blockexplorer.com/b/%d">block explorer</a>' % (num,),
-            '<br><a href="http://blockchain.info/block/%064x">blockchain.info</a>' % (name,),
-        ]))
-        #RP ('<pre>%d transactions\r\n' % len(b.transactions))
-        RP ('<table style="width:100%"><thead><tr><th>num</th><th>ID</th><th>inputs</th><th>outputs</th></tr></thead>')
+    def dump_block (self, PUSH, b, num, name):
+        PUSH (
+            autotable ([
+                ('block', num),
+                ('version', b.version),
+                ('name', '%064x' % (b.name,)),
+                ('prev', '%064x' % (b.prev_block,)),
+                ('merk', '%064x' % (b.merkle_root,)),
+                ('time', '%s (%s)' % (b.timestamp, time.ctime (b.timestamp))),
+                ('bits', b.bits),
+                ('nonce', b.nonce),
+                ('txns', len(b.transactions)),
+            ]),
+            elem0 ('br'), wrap1 ('a', 'block explorer', href="http://blockexplorer.com/block/%064x" % (b.name)),
+            elem0 ('br'), wrap1 ('a', 'blockchain.info', href="http://blockchain.info/block/%064x" % (b.name)),
+        )
+        PUSH (elem0 ('table'), thead ('num', 'name', 'inputs', 'outputs'))
         for i in range (len (b.transactions)):
-            self.dump_tx (request, b.transactions[i], i)
-        RP ('</table>')
-        #RP ('</pre>')
+            self.dump_tx (PUSH, b.transactions[i], i)
+        PUSH (elem1 ('table'))
 
-    def cmd_block (self, request, parts):
+    def cmd_block (self, request, PUSH, parts):
         db = the_block_db
-        RP = request.push
+        space2 = ent ('nbsp') * 2
         if len(parts) == 2 and len (parts[1]):
             name = parts[1]
-            if len(name) < 64 and db.num_block.has_key (int (name)):
-                name = list(db.num_block[int(name)])[0]
+            if len(name) < 64 and re.match ('^[0-9]+$', name) and db.num_block.has_key (int (name)):
+                names = list (db.num_block[int(name)])
+                name, length = longest (names)
             else:
                 name = name_from_hex (name)
         else:
@@ -282,47 +300,53 @@ class handler:
         if db.has_key (name):
             b = db[name]
             num = db.block_num[name]
-            RP ('<br>&nbsp;&nbsp;<a href="/admin/block/%064x">First Block</a>' % (bitcoin.genesis_block_hash,))
-            RP ('&nbsp;&nbsp;<a href="/admin/block/">Last Block</a><br>')
+            PUSH (
+                elem0 ('br'),
+                space2,
+                wrap1 ('a', 'First Block', href='/admin/block/%064x' % (bitcoin.genesis_block_hash,)),
+                space2,
+                wrap1 ('a', 'Last Block', href='/admin/block/'),
+                elem0 ('br'),
+            )
             if name != bitcoin.genesis_block_hash:
-                RP ('&nbsp;&nbsp;<a href="/admin/block/%064x">Prev Block</a>' % (db.prev[name],))
+                PUSH (space2, wrap1 ('a', 'Prev Block', href='/admin/block/%064x' % (db.prev[name],)))
             else:
-                RP ('&nbsp;&nbsp;Prev Block<br>')
-            if db.num_block.has_key (num + 1):
-                names = list (db.num_block[num + 1])
-                if len(names) > 1:
-                    longer, length = longest (names)
-                    for i in range (len (names)):
-                        if names[i] != longer:
-                            descrip = "Next Block (Orphan Chain)"
-                            aclass = ' class="alert" '
-                        else:
-                            descrip = "Next Block"
-                            aclass = ''
-                        RP ('&nbsp;&nbsp;<a href="/admin/block/%064x" %s>%s</a>' % (names[i], aclass, descrip,))
-                else:
-                    RP ('&nbsp;&nbsp;<a href="/admin/block/%064x">Next Block</a>' % (names[0],))
-                RP ('<br>')
+                PUSH (space2, 'Prev Block', elemz ('br'))
+            names = db.next (name)
+            if len(names) > 1:
+                longer, length = longest (names)
+                for i in range (len (names)):
+                    if names[i] != longer:
+                        descrip = "Next Block (Orphan Chain)"
+                        aclass = 'alert'
+                    else:
+                        descrip = "Next Block"
+                        aclass = ''
+                    PUSH (space2 + wrap1 ('a', descrip, href='/admin/block/%064x' % (names[i],), klass=aclass))
+            elif len(names) == 1:
+                PUSH (space2 + wrap1 ('a', 'Next Block', href='/admin/block/%064x' % (names[0],)))
             else:
-                RP ('&nbsp;&nbsp;Next Block<br>')
-            self.dump_block (request, b, num, name)
+                PUSH (space2, 'Next Block', elemz ('br'))
+            PUSH (elemz ('br'))
+            self.dump_block (PUSH, b, num, name)
 
-    def dump_tx (self, request, tx, tx_num):
-        RP = request.push
-        RP ('<tr><td>%s</td><td>%s</td>\n' % (tx_num, shorten (Name (dhash (tx.raw)).hex())))
-        RP ('<td><table>')
+    def dump_tx (self, PUSH, tx, tx_num):
+        PUSH (
+            elem0 ('tr'),
+            wrap1 ('td', tx_num),
+            wrap1 ('td', shorten (Name (dhash (tx.raw)).hex())),
+            elem0 ('td'),
+            elem0 ('table'),
+        )
         for i in range (len (tx.inputs)):
             (outpoint, index), script, sequence = tx.inputs[i]
             if tx_num == 0:
                 script = shorthex (script)
             else:
                 script = describe_iscript (parse_script (script))
-            RP ('<tr><td>%s</td><td>%d</td><td>%s</td></tr>' % (
-                shorten (outpoint.hex()),
-                index,
-                script
-            ))
-        RP ('</table></td><td><table>')
+            PUSH (trow (shorten (outpoint.hex()), index, script))
+        PUSH (elems1 ('table', 'td'))
+        PUSH (elem0 ('td'), elem0 ('table'))
         for i in range (len (tx.outputs)):
             value, pk_script = tx.outputs[i]
             kind, addr = get_output_addr (pk_script)
@@ -331,12 +355,11 @@ class handler:
             else:
                 kind = kind + ':'
             k = '%s%s' % (kind, addr)
-            RP ('<tr><td>%d</td><td>%s</td><td>%s</td></tr>' % (i, bitcoin.bcrepr (value), k))
-        # lock time seems to always be zero
+            PUSH (trow (i, bitcoin.bcrepr (value), k))
         #RP ('</table></td><td>%s</td></tr>' % tx.lock_time,)
-        RP ('</table></td></tr>')
+        PUSH (elems1 ('table', 'td', 'tr'))
 
-    def cmd_reload (self, request, parts):
+    def cmd_reload (self, request, PUSH, parts):
         new_hand = reload (sys.modules['webadmin'])
         from __main__ import h
         hl = h.handlers
@@ -349,7 +372,7 @@ class handler:
                 hl[i] = h0
                 break
         request.push ('<h3>[reloaded]</h3>')
-        self.cmd_status (request, parts)
+        self.cmd_status (request, PUSH, parts)
 
     def match_form (self, qparts, names):
         if len(qparts) != len(names):
@@ -360,21 +383,53 @@ class handler:
                     return False
         return True
 
-    def cmd_connect (self, request, parts):
-        RP = request.push
+    def cmd_connect (self, request, PUSH, parts):
         if request.query:
             qparts = parse_qs (request.query[1:])
             if self.match_form (qparts, ['host']):
-                global bc
-                ## if bc:
-                ##     bc.close()
-                bc = connection (qparts['host'][0])
-        RP ('<form>'
-            'IP Address: <input type="text" name="host" value="127.0.0.1"/><br/>'
-            '<input type="submit" value="Connect"/></form>')
+                from __main__ import Connection
+                Connection (qparts['host'][0])
+        PUSH (
+            elem0 ('form'),
+            'IP Address: ',
+            elemz ('input', type="text", name="host", value="127.0.0.1"),
+            elemz ('input', type="submit", value="Connect"),
+        )
 
-    def cmd_shutdown (self, request, parts):
-        request.push ('<h3>Shutting down...</h3>')
+    def cmd_shutdown (self, request, PUSH, parts):
+        request.push (wrap1 ('h3', 'Shutting down...'))
         request.done()
         coro.sleep_relative (1)
         coro.set_exit()
+
+
+def chain_gen (name):
+    db = the_block_db
+    while 1:
+        names = db.next (name)
+        if len(names) > 1:
+            for x in longest (names):
+                yield 1
+        elif len(names) == 1:
+            name = list(names)[0]
+            yield 1
+        else:
+            break
+
+def longest (names):
+    gens = [ (name, chain_gen (name)) for name in list (names) ]
+    ng = len (gens)
+    left = ng
+    n = 0
+    while left > 1:
+        for i in range (ng):
+            if gens[i]:
+                name, gen = gens[i]
+                try:
+                    gen.next()
+                except StopIteration:
+                    gens[i] = None
+                    left -= 1
+        n += 1
+    [(name, _)] = [x for x in gens if x is not None]
+    return name, n
