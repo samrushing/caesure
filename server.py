@@ -76,14 +76,14 @@ class BaseConnection:
 
     # protocol version
     version = 70001
+    # relay flag (see bip37 for details...)
+    relay = False
 
     def __init__ (self, my_addr, other_addr, conn=None):
         self.my_addr = my_addr
         self.other_addr = other_addr
         self.nonce = make_nonce()
         self.other_version = None
-        # see bip37 for details...
-        self.relay = True
         if conn is None:
             W ('other_addr=%r\n' % (other_addr,))
             if ':' in other_addr[0]:
@@ -155,6 +155,7 @@ class BaseConnection:
     def getblocks (self):
         hashes = the_block_db.set_for_getblocks()
         hashes.append (bitcoin.ZERO_NAME)
+        W ('{getblocks %d}' % (len(hashes),))
         self.send_packet ('getblocks', caesure.proto.pack_getblocks (self.version, hashes))
 
     def getdata (self, items):
@@ -178,6 +179,7 @@ class BlockHoover:
         self.target = 0
         self.running = False
         self.live_cv = coro.condition_variable()
+        self.empty_cv = coro.condition_variable()
 
     def get_live_connection (self):
         return self.live_cv.wait()
@@ -205,14 +207,15 @@ class BlockHoover:
                 if len(self.queue) == 0:
                     break
                 else:
-                    # self.queue is non-empty, start requesting blocks (in groups of ? at a time)
-                    while len(self.queue) and the_block_db.last_block < self.target:
+                    while len(self.queue):
                         W ('{hoover1}')
                         name = self.queue.pop()
                         self.qset.remove (name)
                         c = self.get_live_connection()
                         self.requested.add (name)
                         coro.spawn (self.get_block, c, name)
+                    W ('{waiting on empty cv...}')
+                    self.empty_cv.wait()
         finally:
             self.running = False
 
@@ -226,6 +229,7 @@ class BlockHoover:
             try:
                 _, data = coro.with_timeout (30, c.wait_for, 'inv')
                 pairs = caesure.proto.unpack_inv (data)
+                W ('inv: %r\n' % (pairs,))
                 if len(pairs) and all (x[0] == bitcoin.OBJ_BLOCK for x in pairs):
                     # yup, that's what we were waiting for...
                     for _, name in pairs:
@@ -260,6 +264,8 @@ class BlockHoover:
         self.ready[b.prev_block] = b
         if b.name in self.requested:
             self.requested.remove (b.name)
+            if not len(self.requested):
+                self.empty_cv.wake_one()
         # we may have several blocks waiting to be chained
         #  in by the arrival of a missing link...
         while 1:
@@ -285,9 +291,10 @@ class Connection (BaseConnection):
 
     version_string = '/caesure:20140523/'
 
+    relay = False
+
     def __init__ (self, my_addr, other_addr, sock=None):
         BaseConnection.__init__ (self, my_addr, other_addr, sock)
-        self.relay = False
         self.last_packet = 0
         if sock is not None:
             self.direction = 'incoming'
@@ -420,6 +427,9 @@ class Connection (BaseConnection):
     def cmd_ping (self, data):
         W ('ping: data=%r\n' % (data,))
         self.send_packet ('pong', data)
+
+    def cmd_pong (self, data):
+        pass
 
     def cmd_alert (self, data):
         payload, signature = caesure.proto.unpack_alert (data)
@@ -587,7 +597,8 @@ def go (args):
         h.push_handler (coro.http.handlers.favicon_handler (zlib.compress (webadmin.favicon)))
     in_conn_sem = coro.semaphore (args.incoming)
     out_conn_sem = coro.semaphore (args.outgoing)
-    W ('args.serve=%r\n' % (args.serve,))
+    if args.relay:
+        Connection.relay = True
     if args.serve:
         for addr in args.serve:
             coro.spawn (serve, addr)
@@ -615,6 +626,7 @@ if __name__ == '__main__':
     p.add_argument ('-c', '--connect', action="append", help="connect to this address", metavar='IP:PORT')
     p.add_argument ('-m', '--monitor', action='store_true', help='run the monitor on /tmp/caesure.bd')
     p.add_argument ('-a', '--webui', action='store_true', help='run the web interface at http://localhost:8380/admin/')
+    p.add_argument ('-r', '--relay', action='store_true', help='[hack] set relay=True', default=False)
     args = p.parse_args()
     coro.spawn (go, args)
     coro.event_loop()
