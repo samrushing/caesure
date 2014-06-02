@@ -582,17 +582,22 @@ def go (args):
     if args.monitor:
         import coro.backdoor
         coro.spawn (coro.backdoor.serve, unix_path='/tmp/caesure.bd')
+    users = {}
+    if args.user:
+        for user in args.user:
+            u, p = user.split (':')
+            users[u] = p
     if args.webui:
         import coro.http
         import webadmin
         import zlib
         h = coro.http.server()
-        if True:
+        if users:
+            h.push_handler (coro.http.handlers.auth_handler (users, webadmin.handler()))
+            coro.spawn (h.start, (('', 8380)))
+        else:
             h.push_handler (webadmin.handler())
             coro.spawn (h.start, (('127.0.0.1', 8380)))
-        else:
-            h.push_handler (coro.http.handlers.auth_handler ({'foo': 'bar'}, webadmin.handler()))
-            coro.spawn (h.start, (('', 8380)))
         h.push_handler (coro.http.handlers.coro_status_handler())
         h.push_handler (coro.http.handlers.favicon_handler (zlib.compress (webadmin.favicon)))
     in_conn_sem = coro.semaphore (args.incoming)
@@ -627,6 +632,7 @@ if __name__ == '__main__':
     p.add_argument ('-m', '--monitor', action='store_true', help='run the monitor on /tmp/caesure.bd')
     p.add_argument ('-a', '--webui', action='store_true', help='run the web interface at http://localhost:8380/admin/')
     p.add_argument ('-r', '--relay', action='store_true', help='[hack] set relay=True', default=False)
+    p.add_argument ('-u', '--user', action='append', help='webui user (will listen on INADDR_ANY)', metavar='USER:PASS')
     args = p.parse_args()
     coro.spawn (go, args)
     coro.event_loop()
