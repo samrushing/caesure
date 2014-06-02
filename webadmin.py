@@ -214,6 +214,7 @@ class handler:
                 wrap1 ('head', wrap1 ('style', css, type='text/css')),
                 elem0 ('body'),
                 wrap1 ('h1', 'caesure admin'),
+                elem0 ('hr'),
             )
             self.menu (PUSH)
             try:
@@ -262,7 +263,7 @@ class handler:
                 v = 'N/A'
             PUSH (trow (i, conn.packet_count, ip, port, v))
             i += 1
-        PUSH (elem1 ('table'), elem0 ('hr'))
+        PUSH (elem1 ('table'))
 
     def dump_block (self, PUSH, b, num, name):
         PUSH (
@@ -364,8 +365,8 @@ class handler:
         from __main__ import h
         hl = h.handlers
         for i in range (len (h.handlers)):
+            h0 = new_hand.handler()
             if isinstance (hl[i], coro.http.handlers.auth_handler) and hl[i].handler is self:
-                h0 = new_hand.handler()
                 hl[i].handler = h0
                 break
             elif hl[i] is self:
@@ -384,11 +385,13 @@ class handler:
         return True
 
     def cmd_connect (self, request, PUSH, parts):
+        from __main__ import Connection, get_my_addr
         if request.query:
             qparts = parse_qs (request.query[1:])
             if self.match_form (qparts, ['host']):
-                from __main__ import Connection
-                Connection (qparts['host'][0])
+                he_addr = (qparts['host'][0], 8333)
+                me_addr = get_my_addr (he_addr)
+                bc = Connection (me_addr, he_addr)
         PUSH (
             elem0 ('form'),
             'IP Address: ',
