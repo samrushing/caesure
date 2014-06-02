@@ -3,6 +3,7 @@
 TODO
 ----
 
+* getdata/blocks: before txns, let's forward blocks.
 * ledger: [optional, for full forwarding node] live pruning ledger in memory.
 * hardening.
 * bootstrap.dat (choose one of the three options)
