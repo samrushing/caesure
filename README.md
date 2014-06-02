@@ -9,7 +9,7 @@ requirements
 ------------
 
   1. [shrapnel](https://github.com/ironport/shrapnel)
-     Note: shrapnel needs Cython in order to build.
+  2. [Cython](http://cython.org/)
 
 name
 ----
@@ -28,6 +28,8 @@ Still needed:
 
   * the in-memory ledger
   * hardening
+
+See TODO.txt for more detail.
 
 design
 ------
