@@ -364,7 +364,7 @@ cpdef bytes pack_getblocks (uint32_t version, list names):
         r.append (n.name[:32])
     return b''.join (r)
 
-cpdef bytes pack_getdata (list items):
+cpdef bytes pack_inv (list items):
     cdef Name n
     cdef uint32_t kind
     cdef list r = [pack_var_int (len (items))]
