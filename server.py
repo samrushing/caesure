@@ -1,5 +1,7 @@
 # -*- Mode: Python -*-
 
+# should probably rename this network.py
+
 import bitcoin
 import coro
 import pickle
@@ -44,6 +46,12 @@ def secs_since (t0):
 
 W = coro.write_stderr
 
+def WT (m):
+    W ('\x1b[1;31m' + m + '\x1b[0m')
+
+def WF (m):
+    W ('\x1b[1;34m' + m + '\x1b[0m')
+
 the_connection_map = {}
 the_block_db = None
 
@@ -84,6 +92,7 @@ class BaseConnection:
         self.other_addr = other_addr
         self.nonce = make_nonce()
         self.other_version = None
+        self.send_mutex = coro.mutex()
         if conn is None:
             W ('other_addr=%r\n' % (other_addr,))
             if ':' in other_addr[0]:
@@ -99,18 +108,20 @@ class BaseConnection:
         self.conn.connect (self.other_addr)
 
     def send_packet (self, command, payload):
-        lc = len(command)
-        assert (lc < 12)
-        cmd = command + ('\x00' * (12 - lc))
-        h = dhash (payload)
-        checksum, = struct.unpack ('<I', h[:4])
-        self.conn.writev ([
-            bitcoin.MAGIC,
-            cmd,
-            struct.pack ('<II', len(payload), checksum),
-            payload
-        ])
-        W ('>%s>' % (command,))
+        with self.send_mutex:
+            lc = len(command)
+            assert (lc < 12)
+            cmd = command + ('\x00' * (12 - lc))
+            h = dhash (payload)
+            checksum, = struct.unpack ('<I', h[:4])
+            self.conn.writev ([
+                bitcoin.MAGIC,
+                cmd,
+                struct.pack ('<II', len(payload), checksum),
+                payload
+            ])
+            if command not in ('ping', 'pong'):
+                WT (' ' + command)
 
     def get_our_block_height (self):
         return the_block_db.last_block
@@ -141,7 +152,8 @@ class BaseConnection:
                 break
             magic, command, length, checksum = struct.unpack ('<I12sII', data)
             command = command.strip ('\x00')
-            W ('[%s]' % (command,))
+            if command not in ('ping', 'pong'):
+                WF (' ' + command)
             self.packet_count += 1
             self.header = magic, command, length
             # XXX need timeout here for DoS
@@ -161,7 +173,8 @@ class BaseConnection:
     def getdata (self, items):
         "request (TX|BLOCK)+ from the other side"
         W ('GD%d ' % (len(items),))
-        self.send_packet ('getdata', caesure.proto.pack_getdata (items))
+        # note: pack_getdata == pack_inv
+        self.send_packet ('getdata', caesure.proto.pack_inv (items))
 
 class BadState (Exception):
     pass
@@ -301,6 +314,7 @@ class Connection (BaseConnection):
         else:
             self.direction = 'outgoing'
         self.waiting = {}
+        self.known = set()
         coro.spawn (self.go)
 
     def get_our_block_height (self):
@@ -377,17 +391,28 @@ class Connection (BaseConnection):
 
     def cmd_inv (self, data):
         pairs = caesure.proto.unpack_inv (data)
+        for pair in pairs:
+            self.known.add (pair)
         if not the_hoover.running:
             to_fetch = []
             for kind, name in pairs:
-                if kind == bitcoin.OBJ_BLOCK:
-                    if not the_block_db.has_key (name):
-                        to_fetch.append ((kind, name))
+                if kind == bitcoin.OBJ_BLOCK and name not in the_block_db:
+                    to_fetch.append ((kind, name))
             if to_fetch:
                 self.getdata (to_fetch)
 
     def cmd_getdata (self, data):
-        return caesure.proto.unpack_getdata (data)
+        blocks = []
+        for kind, name in caesure.proto.unpack_getdata (data):
+            if kind == bitcoin.OBJ_BLOCK and name in the_block_db:
+                blocks.append (name)
+        coro.spawn (self.send_blocks (blocks))
+        
+    def send_blocks (self, blocks):
+        for name in blocks:
+            self.send_packet (
+                'block', the_block_db.get_block (name)
+            )
 
     def cmd_getaddr (self, data):
         # XXX we should have a thread do this once a minute or so, precomputed.
@@ -406,7 +431,6 @@ class Connection (BaseConnection):
             if len(r) >= 100:
                 break
         payload = caesure.proto.pack_addr (r)
-        W ('addr payload=%s\n' % (payload.encode ('hex')))
         self.send_packet ('addr', payload)
 
     def cmd_tx (self, data):
@@ -425,7 +449,6 @@ class Connection (BaseConnection):
         pass
 
     def cmd_ping (self, data):
-        W ('ping: data=%r\n' % (data,))
         self.send_packet ('pong', data)
 
     def cmd_pong (self, data):
@@ -435,6 +458,15 @@ class Connection (BaseConnection):
         payload, signature = caesure.proto.unpack_alert (data)
         # XXX verify signature
         W ('alert: sig=%r payload=%r\n' % (signature, payload,))
+
+    def send_invs (self, pairs):
+        pairs0 = []
+        for pair in pairs:
+            if pair not in self.known:
+                pairs0.append (pair)
+        W ('{pairs0 = %r}' % (pairs0,))
+        self.send_packet ('inv', caesure.proto.pack_inv (pairs0))
+        self.known.update (pairs0)
 
 class AddressCache:
 
@@ -500,6 +532,20 @@ def status_thread():
             )
         )
 
+def new_block_thread():
+    while 1:
+        name = the_block_db.new_block_cv.wait()
+        nsent = 0
+        for c in the_connection_map.values():
+            if c.packet_count:
+                try:
+                    c.send_invs ([(bitcoin.OBJ_BLOCK, name)])
+                    nsent += 1
+                except OSError:
+                    # let the gen_packets loop deal with this.
+                    pass
+        W ('[new_block %d]' % (nsent,))
+
 def new_random_addr():
     for i in range (100):
         (ip, port) = the_addr_cache.random()
@@ -561,12 +607,6 @@ def connect (addr):
     addr0 = get_my_addr (addr1)
     Connection (addr0, addr1)
 
-# > x = read.table('/tmp/times.csv', header=T)
-# > hist(x$time)
-# > hist(x$time, breaks=seq(0,500))
-# > hist(x$time, breaks=seq(0,500), xlim=c(0,60))
-# > hist(x$time, breaks=seq(0,500), xlim=c(0,60), col="red")
-
 def go (args):
     global the_addr_cache
     global the_block_db
@@ -612,6 +652,7 @@ def go (args):
             coro.spawn (connect, addr)
     coro.spawn (status_thread)
     coro.spawn (the_addr_cache.purge_thread)
+    coro.spawn (new_block_thread)
     # give the servers time to start up and set addresses
     coro.sleep_relative (2)
     while 1:
