@@ -252,16 +252,20 @@ class handler:
             'num: %d' % (db.last_block,),
             wrap1 ('h3', 'connections'),
             elem0 ('table'),
-            thead ('#', 'packets', 'address', 'port', 'version'),
+            thead ('#', 'packets', 'address', 'port', 'height', 'version', 'services'),
         )
         i = 1
         for addr, conn in the_connection_map.iteritems():
             ip, port = conn.other_addr
             if conn.other_version is not None:
                 v = conn.other_version.sub_version_num
+                h = conn.other_version.start_height
+                s = conn.other_version.services
             else:
                 v = 'N/A'
-            PUSH (trow (i, conn.packet_count, ip, port, v))
+                h = 0
+                s = 0
+            PUSH (trow (i, conn.packet_count, ip, port, h, v, s))
             i += 1
         PUSH (elem1 ('table'))
 
