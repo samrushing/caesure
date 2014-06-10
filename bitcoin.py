@@ -309,6 +309,7 @@ class BlockDB:
         self.block_num = {ZERO_NAME: -1}
         self.num_block = {}
         self.last_block = 0
+        self.new_block_cv = coro.condition_variable()
         self.file = None
         if os.path.isfile (METADATA_PATH):
             f = open (METADATA_PATH, 'rb')
@@ -454,6 +455,8 @@ class BlockDB:
             pass
         else:
             self.write_block (name, block)
+            W ('[waking new_block cv]')
+            self.new_block_cv.wake_all (name)
 
     def write_block (self, name, block):
         if self.file is None:
@@ -475,6 +478,9 @@ class BlockDB:
 
     def has_key (self, name):
         return self.prev.has_key (name)
+
+    def __contains__ (self, name):
+        return name in self.prev
 
     # see https://en.bitcoin.it/wiki/Satoshi_Client_Block_Exchange
     # "The getblocks message contains multiple block hashes that the
