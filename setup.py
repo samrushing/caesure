@@ -7,6 +7,7 @@ from Cython.Distutils import build_ext
 exts = [
     Extension ('caesure.proto', ['caesure/proto.pyx']),
     Extension ('caesure._script', ['caesure/_script.pyx']),
+    Extension ('caesure.txfaa', ['caesure/txfaa.pyx'], language="c++"),
 ]
 
 setup (
