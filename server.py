@@ -2,7 +2,7 @@
 
 # should probably rename this network.py
 
-import bitcoin
+
 import coro
 import pickle
 import random
@@ -13,7 +13,11 @@ import sys
 import time
 from pprint import pprint as pp
 
+import bitcoin
+import ledger
+
 from bitcoin import dhash
+import caesure.script
 import caesure.proto
 
 from caesure.proto import Name
@@ -46,14 +50,22 @@ def secs_since (t0):
 
 W = coro.write_stderr
 
+# bright = 30 + n:
+#   0    1    2      3     4     5      6    7
+# Black Red Green Yellow Blue Magenta Cyan White
+
+def ansi (m, color):
+    return (('\x1b[1;%dm' % color) + m + '\x1b[0m')
+
 def WT (m):
-    W ('\x1b[1;31m' + m + '\x1b[0m')
+    W (ansi (m, 31))
 
 def WF (m):
-    W ('\x1b[1;34m' + m + '\x1b[0m')
+    W (ansi (m, 34))
 
 the_connection_map = {}
 the_block_db = None
+verbose = False
 
 def get_random_connection():
     "get a random live connection"
@@ -84,6 +96,8 @@ class BaseConnection:
 
     # protocol version
     version = 70001
+    # software version
+    version_string = '/caesure:20140611/'
     # relay flag (see bip37 for details...)
     relay = False
 
@@ -120,13 +134,12 @@ class BaseConnection:
                 struct.pack ('<II', len(payload), checksum),
                 payload
             ])
-            if command not in ('ping', 'pong'):
+            if verbose and command not in ('ping', 'pong'):
                 WT (' ' + command)
 
     def get_our_block_height (self):
         return the_block_db.last_block
 
-    version_string = '/caesure:20140422/'
 
     def send_version (self):
         v = caesure.proto.VERSION()
@@ -148,11 +161,11 @@ class BaseConnection:
         while 1:
             data = self.stream.read_exact (24)
             if not data:
-                W ('connection closed.\n')
+                #W ('connection closed.\n')
                 break
             magic, command, length, checksum = struct.unpack ('<I12sII', data)
             command = command.strip ('\x00')
-            if command not in ('ping', 'pong'):
+            if verbose and command not in ('ping', 'pong'):
                 WF (' ' + command)
             self.packet_count += 1
             self.header = magic, command, length
@@ -167,14 +180,32 @@ class BaseConnection:
     def getblocks (self):
         hashes = the_block_db.set_for_getblocks()
         hashes.append (bitcoin.ZERO_NAME)
-        W ('{getblocks %d}' % (len(hashes),))
         self.send_packet ('getblocks', caesure.proto.pack_getblocks (self.version, hashes))
 
     def getdata (self, items):
         "request (TX|BLOCK)+ from the other side"
-        W ('GD%d ' % (len(items),))
         # note: pack_getdata == pack_inv
         self.send_packet ('getdata', caesure.proto.pack_inv (items))
+
+    def get_block (self, name, timeout=30):
+        "request a particular block.  return it, or raise TimeoutError"
+        self.getdata ([(bitcoin.OBJ_BLOCK, name)])
+        while 1:
+            _, data = coro.with_timeout (timeout, self.wait_for, 'block')
+            b = bitcoin.BLOCK()
+            b.unpack (data)
+            if b.name == name:
+                return b
+
+    def get_tx (self, name, timeout=30):
+        "request a particular tx.  return it, or raise TimeoutError"
+        self.getdata ([(bitcoin.OBJ_TX, name)])
+        while 1:
+            _, data = coro.with_timeout (timeout, self.wait_for, 'tx')
+            tx = bitcoin.TX()
+            tx.unpack (data)
+            if tx.name == name:
+                return b
 
 class BadState (Exception):
     pass
@@ -254,24 +285,13 @@ class BlockHoover:
                 pass
 
     def get_block (self, conn, name):
-        # request the block we need...
-        conn.getdata ([(bitcoin.OBJ_BLOCK, name)])
-        while 1:
-            W ('{get_block}')
-            # wait til we get the response we want
-            try:
-                _, data = coro.with_timeout (30, conn.wait_for, 'block')
-                b = bitcoin.BLOCK()
-                b.unpack (data)
-                if b.name == name:
-                    # yup, that's the one we wanted...
-                    self.add_block (b)
-                    return
-            except coro.TimeoutError:
-                # let some other connection try it...
-                self.queue.push_front (name)
-                self.qset.add (name)
-                return
+        try:
+            self.add_block (conn.get_block (name))
+        except coro.TimeoutError:
+            # let some other connection try it...
+            self.queue.push_front (name)
+            self.qset.add (name)
+            return
 
     def add_block (self, b):
         self.ready[b.prev_block] = b
@@ -301,8 +321,6 @@ class BlockHoover:
             the_block_db.add (name, b)
 
 class Connection (BaseConnection):
-
-    version_string = '/caesure:20140523/'
 
     relay = False
 
@@ -396,8 +414,12 @@ class Connection (BaseConnection):
         if not the_hoover.running:
             to_fetch = []
             for kind, name in pairs:
-                if kind == bitcoin.OBJ_BLOCK and name not in the_block_db:
-                    to_fetch.append ((kind, name))
+                if kind == bitcoin.OBJ_BLOCK:
+                    if name not in the_block_db:
+                        to_fetch.append ((kind, name))
+                elif kind == bitcoin.OBJ_TX:
+                    if name not in the_txn_pool:
+                        to_fetch.append ((kind, name))
             if to_fetch:
                 self.getdata (to_fetch)
 
@@ -434,7 +456,9 @@ class Connection (BaseConnection):
         self.send_packet ('addr', payload)
 
     def cmd_tx (self, data):
-        return caesure.proto.make_tx (data)
+        tx = bitcoin.TX()
+        tx.unpack (data)
+        the_txn_pool.add (tx)
 
     def cmd_block (self, data):
         if not the_hoover.running:
@@ -443,6 +467,11 @@ class Connection (BaseConnection):
             b.unpack (data)
             b.check_rules()
             the_block_db.add (b.name, b)
+            # this happens when our last block has been orphaned
+            #  by a block that shows up *later* - we need to manually
+            #  request the missing link[s].
+            if b.prev_block not in the_block_db.blocks:
+                self.getdata ([(bitcoin.OBJ_BLOCK, b.prev_block)])
 
     def cmd_notfound (self, data):
         # XXX need to use this in hoover.wait_for!
@@ -464,9 +493,10 @@ class Connection (BaseConnection):
         for pair in pairs:
             if pair not in self.known:
                 pairs0.append (pair)
-        W ('{pairs0 = %r}' % (pairs0,))
-        self.send_packet ('inv', caesure.proto.pack_inv (pairs0))
-        self.known.update (pairs0)
+        if len(pairs0):
+            W ('{pairs0 = %r}' % (pairs0,))
+            self.send_packet ('inv', caesure.proto.pack_inv (pairs0))
+            self.known.update (pairs0)
 
 class AddressCache:
 
@@ -522,6 +552,55 @@ class AddressCache:
             except coro.dns.exceptions.DNS_Soft_Error:
                 pass
 
+# --------------------------------------------------------------------------------
+
+# XXX important - handle txns coming in later that spend outputs that
+#   txns in our pool have spent [i.e., double-spends], especially in the
+#   case where they are accepted into blocks, we need to know to throw them
+#   away.
+
+class TransactionPool:
+
+    def __init__ (self):
+        self.missing = {}
+        self.pool = {}
+        coro.spawn (self.new_block_thread)
+
+    def __contains__ (self, name):
+        return name in self.pool
+
+    def add (self, tx):
+        if tx.name not in self.pool:
+            try:
+                i = 0
+                for outpoint, oscript, sequence in tx.inputs:
+                    amt, redeem = the_txmap[outpoint]
+                    tx.verify0 (i, redeem)
+                    i += 1
+                self.pool[tx.name] = tx
+            except caesure.script.ScriptFailure:
+                W ('[tx %064x script failed]' % (tx.name,))
+            except KeyError:
+                #W ('[tx %064x missing inputs]' % (tx.name,))
+                self.missing[tx.name] = tx
+        else:
+            W ('[tx %064x already]' % (tx.name,))
+
+    def new_block_thread (self):
+        while 1:
+            b = the_block_db.new_block_cv.wait()
+            in_pool = 0
+            total = len(self.pool)
+            for tx in b.transactions:
+                try:
+                    del self.pool[tx.name]
+                    in_pool += 1
+                except KeyError:
+                    pass
+            W (ansi ('[pool: removed %d of %d]' % (in_pool, total), 35))
+
+# --------------------------------------------------------------------------------
+
 def status_thread():
     while 1:
         coro.sleep_relative (10)
@@ -534,7 +613,8 @@ def status_thread():
 
 def new_block_thread():
     while 1:
-        name = the_block_db.new_block_cv.wait()
+        block = the_block_db.new_block_cv.wait()
+        name = block.name
         nsent = 0
         for c in the_connection_map.values():
             if c.packet_count:
@@ -544,6 +624,7 @@ def new_block_thread():
                 except OSError:
                     # let the gen_packets loop deal with this.
                     pass
+        the_txmap.feed_block (block, block.get_height())
         W ('[new_block %d]' % (nsent,))
 
 def new_random_addr():
@@ -611,14 +692,21 @@ def go (args):
     global the_addr_cache
     global the_block_db
     global the_hoover
+    global the_txmap
+    global the_txn_pool
     global in_conn_sem, out_conn_sem
     global h
+    global verbose
     import coro
     the_addr_cache = AddressCache()
     the_block_db = bitcoin.BlockDB()
     the_hoover = BlockHoover()
+    the_txn_pool = TransactionPool()
     # install a real resolver
     coro.dns.cache.install()
+    the_txmap = ledger.TransactionMap()
+    the_txmap.catch_up (the_block_db)
+    verbose = args.verbose
     if args.monitor:
         import coro.backdoor
         coro.spawn (coro.backdoor.serve, unix_path='/tmp/caesure.bd')
@@ -650,7 +738,7 @@ def go (args):
     if args.connect:
         for addr in args.connect:
             coro.spawn (connect, addr)
-    coro.spawn (status_thread)
+    #coro.spawn (status_thread)
     coro.spawn (the_addr_cache.purge_thread)
     coro.spawn (new_block_thread)
     # give the servers time to start up and set addresses
@@ -674,6 +762,7 @@ if __name__ == '__main__':
     p.add_argument ('-a', '--webui', action='store_true', help='run the web interface at http://localhost:8380/admin/')
     p.add_argument ('-r', '--relay', action='store_true', help='[hack] set relay=True', default=False)
     p.add_argument ('-u', '--user', action='append', help='webui user (will listen on INADDR_ANY)', metavar='USER:PASS')
+    p.add_argument ('-v', '--verbose', action='store_true', help='show verbose packet flow')
     args = p.parse_args()
     coro.spawn (go, args)
     coro.event_loop()
