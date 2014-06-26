@@ -33,8 +33,8 @@ def wrapn (_name, items, **props):
     r.append (elem1 (_name))
     return ''.join (r)
 
-def wrap1 (_name, item, **props):
-    return wrapn (_name, [item], **props)
+def wrap (_name, *items, **props):
+    return wrapn (_name, items, **props)
 
 def trow (*vals):
     r = ['<tr>']
@@ -48,16 +48,16 @@ def trow (*vals):
         else:
             klass = None
         if klass:
-            r.append (wrap1 ('td', val, klass=klass))
+            r.append (wrap ('td', val, klass=klass))
         else:
-            r.append (wrap1 ('td', val))
+            r.append (wrap ('td', val))
     r.append ('</tr>\n')
     return ''.join (r)
 
 def thead (*cols):
     r = [elem0 ('thead'), elem0 ('tr'),]
     for col in cols:
-        r.append (wrap1 ('th', col))
+        r.append (wrap ('th', col))
     r.append (elems1 ('tr', 'thead'))
     return ''.join (r)
 
@@ -68,18 +68,25 @@ def autotable (rows, use_classy_rows=False, **props):
         if use_classy_rows:
             r.append (wrapn ('tr', trow (*row)))
         else:
-            r.append (wrapn ('tr', [wrap1 ('td', x) for x in row]))
+            r.append (wrapn ('tr', [wrap ('td', x) for x in row]))
     r.append (elem1 ('table'))
     return ''.join (r)
 
 def autorow (cols, **props):
     r = [elem0 ('table', style="width:auto", **props)]
-    r.append (wrapn ('tr', [wrap1 ('td', x) for x in cols]))
+    r.append (wrapn ('tr', [wrap ('td', x) for x in cols]))
     r.append (elem1 ('table'))
     return ''.join (r)
 
 def overline (text):
-    return wrap1 ('font', text, style='text-decoration: overline;')
+    return wrap ('font', text, style='text-decoration: overline;')
 
 def ent (name):
     return '&%s;' % (name,)
+
+from functools import partial
+
+# things that tend to be used with wrap, defined in UPPERCASE()
+__wraps = "head h1 h2 h3 h4 h5 h6 script p div span a pre form table tr td thead style b button".split()
+for __name in __wraps:
+    globals()[__name.upper()] = partial (wrap, __name)
