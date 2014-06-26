@@ -76,7 +76,7 @@ class OutputBuffer:
 
 def shorten (s, w=20):
     if len(s) > w:
-        return wrap1 ('span', s, klass="ellipsis")
+        return SPAN (s, klass="ellipsis")
     else:
         return s
 
@@ -173,7 +173,7 @@ def describe_iscript (p):
         # PUSH PUSH
         pubkey = p[1][1]
         if pubkey[0] in ('\x02', '\x03', '\x04'):
-            return 'sig ' + key_to_address (rhash (pubkey))
+            return key_to_address (rhash (pubkey))
         else:
             return shorthex (pubkey)
     elif p[0] == (0, '') and all ([x[0] == 0 for x in p[1:]]):
@@ -211,9 +211,9 @@ class handler:
             PUSH = OB.push
             PUSH (
                 elem0 ('html'),
-                wrap1 ('head', wrap1 ('style', css, type='text/css')),
+                HEAD (STYLE (css, type='text/css')),
                 elem0 ('body'),
-                wrap1 ('h1', 'caesure admin'),
+                H1 ('caesure admin'),
                 elem0 ('hr'),
             )
             self.menu (PUSH)
@@ -236,21 +236,22 @@ class handler:
         space = '&nbsp;'
         space2 = space * 2
         PUSH (
-            space2 + wrap1 ('a', 'reload', href="/admin/reload"),
-            space2 + wrap1 ('a', 'status', href="/admin/status"),
-            space2 + wrap1 ('a', 'blocks', href="/admin/block"),
-            space2 + wrap1 ('a', 'connect', href="/admin/connect"),
-            space2 + wrap1 ('a', 'shutdown', href="/admin/shutdown"),
+            space2 + A ('reload', href="/admin/reload"),
+            space2 + A ('status', href="/admin/status"),
+            space2 + A ('blocks', href="/admin/block"),
+            space2 + A ('pool', href="/admin/pool"),
+            space2 + A ('connect', href="/admin/connect"),
+            space2 + A ('shutdown', href="/admin/shutdown"),
         )
 
     def cmd_status (self, request, PUSH, parts):
         db = the_block_db
         PUSH (
-            wrap1 ('h3', 'last block'),
+            H3 ('last block'),
             'name[s]: %s' % (escape (', '.join ([repr(x) for x in db.num_block[db.last_block]]))),
             elem0 ('br'),
             'num: %d' % (db.last_block,),
-            wrap1 ('h3', 'connections'),
+            H3 ('connections'),
             elem0 ('table'),
             thead ('#', 'packets', 'address', 'port', 'height', 'version', 'services'),
         )
@@ -282,8 +283,8 @@ class handler:
                 ('nonce', b.nonce),
                 ('txns', len(b.transactions)),
             ]),
-            elem0 ('br'), wrap1 ('a', 'block explorer', href="http://blockexplorer.com/block/%064x" % (b.name)),
-            elem0 ('br'), wrap1 ('a', 'blockchain.info', href="http://blockchain.info/block/%064x" % (b.name)),
+            elem0 ('br'), A ('block explorer', href="http://blockexplorer.com/block/%064x" % (b.name)),
+            elem0 ('br'), A ('blockchain.info', href="http://blockchain.info/block/%064x" % (b.name)),
         )
         PUSH (elem0 ('table'), thead ('num', 'name', 'inputs', 'outputs'))
         for i in range (len (b.transactions)):
@@ -308,13 +309,13 @@ class handler:
             PUSH (
                 elem0 ('br'),
                 space2,
-                wrap1 ('a', 'First Block', href='/admin/block/%064x' % (bitcoin.genesis_block_hash,)),
+                A ('First Block', href='/admin/block/%064x' % (bitcoin.genesis_block_hash,)),
                 space2,
-                wrap1 ('a', 'Last Block', href='/admin/block/'),
+                A ('Last Block', href='/admin/block/'),
                 elem0 ('br'),
             )
             if name != bitcoin.genesis_block_hash:
-                PUSH (space2, wrap1 ('a', 'Prev Block', href='/admin/block/%064x' % (db.prev[name],)))
+                PUSH (space2, A ('Prev Block', href='/admin/block/%064x' % (db.prev[name],)))
             else:
                 PUSH (space2, 'Prev Block', elemz ('br'))
             names = db.next (name)
@@ -327,9 +328,9 @@ class handler:
                     else:
                         descrip = "Next Block"
                         aclass = ''
-                    PUSH (space2 + wrap1 ('a', descrip, href='/admin/block/%064x' % (names[i],), klass=aclass))
+                    PUSH (space2 + A (descrip, href='/admin/block/%064x' % (names[i],), klass=aclass))
             elif len(names) == 1:
-                PUSH (space2 + wrap1 ('a', 'Next Block', href='/admin/block/%064x' % (names[0],)))
+                PUSH (space2 + A ('Next Block', href='/admin/block/%064x' % (names[0],)))
             else:
                 PUSH (space2, 'Next Block', elemz ('br'))
             PUSH (elemz ('br'))
@@ -338,8 +339,8 @@ class handler:
     def dump_tx (self, PUSH, tx, tx_num):
         PUSH (
             elem0 ('tr'),
-            wrap1 ('td', tx_num),
-            wrap1 ('td', shorten (Name (dhash (tx.raw)).hex())),
+            TD (tx_num),
+            TD (shorten (Name (dhash (tx.raw)).hex())),
             elem0 ('td'),
             elem0 ('table'),
         )
@@ -363,6 +364,19 @@ class handler:
             PUSH (trow (i, bitcoin.bcrepr (value), k))
         #RP ('</table></td><td>%s</td></tr>' % tx.lock_time,)
         PUSH (elems1 ('table', 'td', 'tr'))
+
+    def cmd_pool (self, request, PUSH, parts):
+        PUSH (
+            H3 ('transaction pool'),
+            elem0 ('table'),
+        )
+        from __main__ import the_txn_pool
+        txns = the_txn_pool.pool.values()
+        i = 0
+        for tx in txns:
+            self.dump_tx (PUSH, tx, i)
+            i += 1
+        PUSH (elem1 ('table'))
 
     def cmd_reload (self, request, PUSH, parts):
         new_hand = reload (sys.modules['webadmin'])
@@ -404,7 +418,7 @@ class handler:
         )
 
     def cmd_shutdown (self, request, PUSH, parts):
-        request.push (wrap1 ('h3', 'Shutting down...'))
+        request.push (H3 ('Shutting down...'))
         request.done()
         coro.sleep_relative (1)
         coro.set_exit()
