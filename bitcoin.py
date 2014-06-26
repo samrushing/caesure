@@ -195,11 +195,8 @@ class TX (caesure.proto.TX):
 
     def verify1 (self, pub_key, sig, vhash):
         k = KEY()
-        #W ('pub_key=%r\n' % (pub_key,))
         k.set_pubkey (pub_key)
-        r = k.verify (vhash, sig)
-        #print 'ecdsa verify...', r
-        return r
+        return k.verify (vhash, sig)
 
 class BadBlock (Exception):
     pass
@@ -456,7 +453,7 @@ class BlockDB:
         else:
             self.write_block (name, block)
             W ('[waking new_block cv]')
-            self.new_block_cv.wake_all (name)
+            self.new_block_cv.wake_all (block)
 
     def write_block (self, name, block):
         if self.file is None:
