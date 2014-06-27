@@ -186,7 +186,7 @@ cdef class fist:
         self.item = tree_nil
         self.removed = False
 
-# This is based on juliette's version of anderson's deletion algorithm.
+# This is based on julienne's version of anderson's deletion algorithm.
 #  I found it a little easier to reason about (w.r.t. immutability).
 
 cdef aa_node tree_remove (fist self, aa_node root, char * key, int index):
