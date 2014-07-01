@@ -5,8 +5,6 @@
 # Author: Sam Rushing. http://www.nightmare.com/~rushing/
 # July 2011 - May 2014
 #
-# because we can have forks/orphans,
-# num->block is 1->N and block->num is 1->1
 #
 import copy
 import cPickle
@@ -111,10 +109,14 @@ class timer:
 # --------------------------------------------------------------------------------
 
 # pull in one of the ECDSA key implementations.
-# NOTE: as of march 2013, the pure ecdsa verify seems to have a problem. FIXME.
 
-from ecdsa_ssl import KEY
+try:
+    from ecdsa_secp256k1 import KEY
+except ImportError:
+    from ecdsa_ssl import KEY
+
 #from ecdsa_pure import KEY
+#from ecdsa_cryptopp import KEY
 
 # --------------------------------------------------------------------------------
 
@@ -193,10 +195,10 @@ class TX (caesure.proto.TX):
             # this can happen if r == 0 (verify failed) or r == -1 (openssl error)
             raise VerifyError
 
-    def verify1 (self, pub_key, sig, vhash):
+    def verify1 (self, pub_key, sig, to_hash):
         k = KEY()
         k.set_pubkey (pub_key)
-        return k.verify (vhash, sig)
+        return k.verify (to_hash, sig)
 
 class BadBlock (Exception):
     pass
@@ -366,29 +368,32 @@ class BlockDB:
         W ('done %.2f secs (last_block=%d)\n' % (t0.end(), self.last_block))
         return max_pos
 
-    # block can have only one previous block, but may have multiple next blocks.
     def scan_block_chain (self, last_pos):
         from caesure.proto import unpack_block_header
         if not os.path.isfile (BLOCKS_PATH):
             open (BLOCKS_PATH, 'wb').write('')
-        file = open (BLOCKS_PATH, 'rb')
+        f = open (BLOCKS_PATH, 'rb')
         W ('reading block headers...')
-        file.seek (last_pos)
+        f.seek (0, 2)
+        eof_pos = f.tell()
+        f.seek (last_pos)
         W ('starting at pos %r...' % (last_pos,))
         t0 = timer()
         count = 0
         while 1:
-            pos = file.tell()
-            size = file.read (8)
+            pos = f.tell()
+            size = f.read (8)
             if not size:
                 break
             else:
                 size, = struct.unpack ('<Q', size)
-                header = file.read (80)
+                header = f.read (80)
                 (version, prev_block, merkle_root,
                  timestamp, bits, nonce) = unpack_block_header (header)
                 # skip the rest of the block
-                file.seek (size - 80, 1)
+                f.seek (size - 80, 1)
+                if f.tell() > eof_pos:
+                    break
                 name = Name (dhash (header))
                 bn = 1 + self.block_num[prev_block]
                 self.prev[name] = prev_block
@@ -400,7 +405,7 @@ class BlockDB:
                     W ('(%d)' % (bn,))
                 count += 1
         W ('done. scanned %d blocks in %.02f secs\n' % (count, t0.end()))
-        file.close()
+        f.close()
         self.read_only_file = open (BLOCKS_PATH, 'rb')
         if count > 1000:
             self.dump_metadata()
@@ -414,7 +419,11 @@ class BlockDB:
         self.read_only_file.seek (pos)
         size = self.read_only_file.read (8)
         size, = struct.unpack ('<Q', size)
-        return self.read_only_file.read (size)
+        block = self.read_only_file.read (size)
+        if len(block) == size:
+            return block
+        else:
+            raise EOFError
 
     def __getitem__ (self, name):
         if len(name) == 64:
