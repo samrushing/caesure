@@ -151,7 +151,7 @@ class TransactionMap:
             if i % 10000 == 0:
                 W('%d ' % (i,))
             if i == self.height + 1:
-                self.feed_block(db[name], i, True)
+                self.feed_block(db[name], i)
                 fed += 1
             elif i <= self.height:
                 pass
