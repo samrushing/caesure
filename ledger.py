@@ -102,7 +102,7 @@ class TransactionMap:
         self.total += output_sum
         return output_sum
 
-    def feed_block (self, b, height):
+    def feed_block (self, b, height, verify=False):
         # assume coinbase is ok for now
         tx0 = b.transactions[0]
         reward0 = self.store_outputs (tx0)
@@ -114,6 +114,8 @@ class TransactionMap:
             for i in range (len (tx.inputs)):
                 (outpoint, index), script, sequence = tx.inputs[i]
                 amt, oscript = self.outpoints.pop_utxo (str(outpoint), index)
+                if verify:
+                    tx.verify0 (i, oscript)
                 input_sum += amt
             output_sum = self.store_outputs (tx)
             fees += input_sum - output_sum
@@ -149,7 +151,7 @@ class TransactionMap:
             if i % 10000 == 0:
                 W('%d ' % (i,))
             if i == self.height + 1:
-                self.feed_block(db[name], i)
+                self.feed_block(db[name], i, True)
                 fed += 1
             elif i <= self.height:
                 pass
