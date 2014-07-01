@@ -481,8 +481,7 @@ class verifying_machine (machine):
             W ('hash_type=%d\n' % (hash_type,))
             raise NotImplementedError
         to_hash = self.tx.get_ecdsa_hash (self.index, s, hash_type)
-        vhash = dhash (to_hash)
-        return self.tx.verify1 (pub, sig, vhash)
+        return self.tx.verify1 (pub, sig, to_hash)
 
     # having trouble understanding if there is a difference between: CHECKMULTISIG and P2SH.
     # https://en.bitcoin.it/wiki/BIP_0016
