@@ -25,7 +25,7 @@ exts = [
     #    "caesure.secp256k1",
     #    ["caesure/secp256k1.pyx"],
     #    include_dirs=['/usr/local/include'],
-    #    libraries=['secp256k1', '/usr/lib64/libgmp.so.3', 'z'],
+    #    libraries=['secp256k1', 'gmp', 'z'],
     #    extra_link_args = ['-Wl,-rpath,/usr/local/lib'],
     #),
 ]
