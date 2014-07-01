@@ -4,31 +4,37 @@ from distutils.core import setup
 from distutils.extension import Extension
 from Cython.Distutils import build_ext
 
-# XXX would be nice to probe for what libraries are present and
-#     build the best choice automatically.
-
-#cryptopp = "/homes/sam/src/crypto++"
 
 exts = [
     Extension ('caesure.proto', ['caesure/proto.pyx']),
     Extension ('caesure._script', ['caesure/_script.pyx']),
     Extension ('caesure.txfaa', ['caesure/txfaa.pyx'], language="c++"),
-    #Extension (
-    #    "caesure.cryptopp",
-    #    ["caesure/cryptopp.pyx", "caesure/cryptopp_wrap.cpp"],
-    #    include_dirs=[cryptopp],
-    #    library_dirs=[cryptopp],
-    #    libraries=['cryptopp'],
-    #    language="c++",
-    #),
-    #Extension (
-    #    "caesure.secp256k1",
-    #    ["caesure/secp256k1.pyx"],
-    #    include_dirs=['/usr/local/include'],
-    #    libraries=['secp256k1', 'gmp', 'z'],
-    #    extra_link_args = ['-Wl,-rpath,/usr/local/lib'],
-    #),
 ]
+
+import os
+if os.path.isfile ('/usr/local/lib/libsecp256k1.a'):
+    exts.append (
+        Extension (
+            "caesure.secp256k1",
+            ["caesure/secp256k1.pyx"],
+            include_dirs=['/usr/local/include'],
+            libraries=['secp256k1', 'gmp', 'z'],
+            extra_link_args = ['-Wl,-rpath,/usr/local/lib'],
+        )
+    )
+        
+## edit bitcoin.py as well (search for 'ecdsa_cryptopp').
+# cryptopp = '/home/rushing/src/crypto++'
+# exts.append (
+#     Extension (
+#         "caesure.cryptopp",
+#         ["caesure/cryptopp.pyx", "caesure/cryptopp_wrap.cpp"],
+#         include_dirs=[cryptopp],
+#         library_dirs=[cryptopp],
+#         libraries=['cryptopp'],
+#         language="c++",
+#     )
+# )
 
 # XXX re-tag shrapnel & require the correct version here. [for coro.ssl.openssl.ecdsa]
 setup (
