@@ -115,7 +115,6 @@ try:
 except ImportError:
     from ecdsa_ssl import KEY
 
-#from ecdsa_pure import KEY
 #from ecdsa_cryptopp import KEY
 
 # --------------------------------------------------------------------------------
