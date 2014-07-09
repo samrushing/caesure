@@ -141,19 +141,23 @@ class TX (caesure.proto.TX):
     def get_hash (self):
         return dhash (self.render())
 
-    def dump (self):
-        P ('hash: %s\n' % (hexify (dhash (self.render())),))
-        P ('inputs: %d\n' % (len(self.inputs)))
+    def dump (self, fout=sys.stdout):
+        D = fout.write
+        D ('hash: %s\n' % (hexify (dhash (self.render())),))
+        D ('inputs: %d\n' % (len(self.inputs)))
         for i in range (len (self.inputs)):
             (outpoint, index), script, sequence = self.inputs[i]
-            redeem = pprint_script (parse_script (script))
-            P ('%3d %064x:%d %r %d\n' % (i, outpoint, index, redeem, sequence))
-        P ('%d outputs\n' % (len(self.outputs),))
+            try:
+                redeem = pprint_script (parse_script (script))
+            except ScriptError:
+                redeem = script.encode ('hex')
+            D ('%3d %064x:%d %r %d\n' % (i, outpoint, index, redeem, sequence))
+        D ('%d outputs\n' % (len(self.outputs),))
         for i in range (len (self.outputs)):
             value, pk_script = self.outputs[i]
             pk_script = pprint_script (parse_script (pk_script))
-            P ('%3d %s %r\n' % (i, bcrepr (value), pk_script))
-        P ('lock_time: %s\n' % (self.lock_time,))
+            D ('%3d %s %r\n' % (i, bcrepr (value), pk_script))
+        D ('lock_time: %s\n' % (self.lock_time,))
 
     def render (self):
         return self.pack()
