@@ -263,7 +263,7 @@ def catch_up (db):
     # [XXX looking into using a disk i/o thread for this?]
     coro.set_latency_warning (0)
     for name in most_names:
-        if i % 10000 == 0:
+        if i % 1000 == 0:
             W('%d ' % (i,))
         if i == ledger.height + 1:
             block = db[name]
