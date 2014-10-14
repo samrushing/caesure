@@ -739,7 +739,7 @@ def go (args, global_state):
     G = global_state
     G.args = args
     G.addr_cache = AddressCache()
-    G.block_db = block_db.BlockDB()
+    G.block_db = block_db.BlockDB (ready_only=False)
     G.hoover = BlockHoover()
     G.txn_pool = TransactionPool()
     G.recent_blocks = ledger.catch_up (G.block_db)

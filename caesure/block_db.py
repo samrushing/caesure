@@ -189,7 +189,7 @@ class BLOCK (caesure.proto.BLOCK):
 
 class BlockDB:
 
-    def __init__ (self, read_only=False):
+    def __init__ (self, read_only=True):
         self.read_only = read_only
         self.blocks = {}
         self.prev = {}
