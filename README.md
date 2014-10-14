@@ -91,7 +91,7 @@ Start up a node with 20 outgoing connections and 0 incoming (i.e., no server)::
 
 Start up a node with 100 outgoing connections and 100 incoming::
 
-    $ scripts/caesure -o 100 -i 100 -m -a
+    $ scripts/caesure -o 100 -i 100 -m -a -s 1.2.3.4:8333
 
 Once up and running, caesure will start downloading the block chain from the network if necessary.
 
