@@ -475,7 +475,7 @@ cdef class BLOCK:
     def make_TX (self):
         return TX()
 
-    def unpack (self, bytes data):
+    def unpack (self, bytes data, header_only=False):
         cdef pkt p = pkt (data)
         cdef uint64_t tx_count
         cdef TX tx
@@ -486,13 +486,13 @@ cdef class BLOCK:
         self.timestamp = p.u32()
         self.bits = p.u32()
         self.nonce = p.u32()
-        tx_count = p.unpack_var_int()
         self.transactions = []
-        cdef int i
-        for i in range (tx_count):
-            tx = self.make_TX()
-            tx.unpack1 (p)
-            self.transactions.append (tx)
+        if not header_only:
+            tx_count = p.unpack_var_int()
+            for i in range (tx_count):
+                tx = self.make_TX()
+                tx.unpack1 (p)
+                self.transactions.append (tx)
         self.name = self.get_name()
 
     def get_name (self):
@@ -510,22 +510,22 @@ def unpack_block_header (bytes data):
     nonce = p.u32()
     return (version, prev_block, merkle_root, timestamp, bits, nonce)
 
-def make_block (data):
+def make_block (bytes data):
     b = BLOCK()
     b.unpack (data)
     return b
 
-def make_tx (data):
+def make_tx (bytes data):
     tx = TX()
     tx.unpack (data)
     return tx
 
-def unpack_version (data):
+def unpack_version (bytes data):
     v = VERSION()
     v.unpack (data)
     return v
 
-def unpack_inv (data):
+def unpack_inv (bytes data):
     cdef pkt p = pkt (data)
     cdef uint64_t count = p.unpack_var_int()
     cdef list result = []
@@ -536,7 +536,23 @@ def unpack_inv (data):
         result.append ((obj_id, obj_hash))
     return result
 
-def unpack_addr (data):
+def unpack_headers (bytes data):
+    cdef pkt p = pkt (data)
+    cdef uint64_t count = p.unpack_var_int()
+    cdef uint64_t txcount = 0
+    cdef bytes header
+    cdef list result = []
+    cdef BLOCK b
+    for i in range (count):
+        header = p.unpack_str (80)
+        b = BLOCK()
+        b.unpack (header, True)
+        # ignore this for now.
+        txcount = p.unpack_var_int()
+        result.append (b)
+    return result
+
+def unpack_addr (bytes data):
     cdef pkt p = pkt (data)
     cdef uint64_t count = p.unpack_var_int()
     cdef list result = []
@@ -546,10 +562,10 @@ def unpack_addr (data):
         result.append ((p.u32(), p.unpack_net_addr()))
     return result
         
-def unpack_getdata (data):
+def unpack_getdata (bytes data):
     return unpack_inv (data)
 
-def unpack_alert (data):
+def unpack_alert (bytes data):
     cdef pkt p = pkt (data)
     cdef bytes payload = p.unpack_var_str()
     cdef bytes signature = p.unpack_var_str()
