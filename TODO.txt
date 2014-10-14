@@ -3,9 +3,9 @@
 TODO
 ----
 
+* getblocks, getheaders.
 * hardening.
 * bootstrap.dat (choose one of the three options)
-* use html_help module.
 * investigate using our own copy of ripemd160 (using the one in 'hashlib' is a back-door openssl dep.)
 * sanity check hashes of known blocks
 * match compiler
@@ -32,3 +32,4 @@ done
 ----
 * getdata/blocks: before txns, let's forward blocks.
 * proper package installation and directory for blocks.bin etc...
+* use html_help module.
