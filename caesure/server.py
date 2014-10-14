@@ -13,14 +13,12 @@ import sys
 import time
 from pprint import pprint as pp
 
-import bitcoin
-import ledger
+from caesure import block_db
+from caesure import ledger
+from caesure import proto
+from caesure import script
 
-from bitcoin import dhash
-import caesure.script
-import caesure.proto
-
-from caesure.proto import Name
+from caesure.bitcoin import *
 
 ticks_to_sec = coro.tsc_time.ticks_to_sec
 
@@ -132,7 +130,7 @@ class BaseConnection:
             h = dhash (payload)
             checksum, = struct.unpack ('<I', h[:4])
             self.conn.writev ([
-                bitcoin.MAGIC,
+                block_db.MAGIC,
                 cmd,
                 struct.pack ('<II', len(payload), checksum),
                 payload
@@ -182,7 +180,7 @@ class BaseConnection:
 
     def getblocks (self):
         hashes = the_block_db.set_for_getblocks()
-        hashes.append (bitcoin.ZERO_NAME)
+        hashes.append (block_db.ZERO_NAME)
         self.send_packet ('getblocks', caesure.proto.pack_getblocks (self.version, hashes))
 
     def getdata (self, items):
@@ -192,10 +190,10 @@ class BaseConnection:
 
     def get_block (self, name, timeout=5):
         "request a particular block.  return it, or raise TimeoutError"
-        self.getdata ([(bitcoin.OBJ_BLOCK, name)])
+        self.getdata ([(block_db.OBJ_BLOCK, name)])
         for i in range (5):
             _, data = coro.with_timeout (timeout, self.wait_for, 'block')
-            b = bitcoin.BLOCK()
+            b = block_db.BLOCK()
             b.unpack (data)
             the_hoover.log ('%r got' % (b.name,))
             if b.name == name:
@@ -206,10 +204,10 @@ class BaseConnection:
 
     def get_tx (self, name, timeout=5):
         "request a particular tx.  return it, or raise TimeoutError"
-        self.getdata ([(bitcoin.OBJ_TX, name)])
+        self.getdata ([(block_db.OBJ_TX, name)])
         for i in range (5):
             _, data = coro.with_timeout (timeout, self.wait_for, 'tx')
-            tx = bitcoin.TX()
+            tx = block_db.TX()
             tx.unpack (data)
             if tx.name == name:
                 return b
@@ -252,13 +250,13 @@ class BlockHoover:
         # first, get a list of blocks we need to fetch via getheaders.
         db = the_block_db
         if not db.num_block:
-            self.queue.push (bitcoin.genesis_block_hash)
-            self.qset.add (bitcoin.genesis_block_hash)
+            self.queue.push (block_db.genesis_block_hash)
+            self.qset.add (block_db.genesis_block_hash)
         try:
             self.running = True
             c = self.get_live_connection()
             W ('[getheaders start]')
-            t0 = bitcoin.timer()
+            t0 = block_db.timer()
             names = c.getheaders()
             W ('[getheaders stop %.2f]' % (t0.end(),))
             for name in names:
@@ -311,7 +309,7 @@ class BlockHoover:
         # we may have several blocks waiting to be chained
         #  in by the arrival of a missing link...
         while 1:
-            if the_block_db.has_key (b.prev_block) or (b.prev_block == bitcoin.ZERO_NAME):
+            if the_block_db.has_key (b.prev_block) or (b.prev_block == block_db.ZERO_NAME):
                 del self.ready[b.prev_block]
                 self.block_to_db (b.name, b)
                 if self.ready.has_key (b.name):
@@ -426,10 +424,10 @@ class Connection (BaseConnection):
         if not the_hoover.running:
             to_fetch = []
             for kind, name in pairs:
-                if kind == bitcoin.OBJ_BLOCK:
+                if kind == block_db.OBJ_BLOCK:
                     if name not in the_block_db:
                         to_fetch.append ((kind, name))
-                elif kind == bitcoin.OBJ_TX:
+                elif kind == block_db.OBJ_TX:
                     if name not in the_txn_pool:
                         to_fetch.append ((kind, name))
             if to_fetch:
@@ -438,7 +436,7 @@ class Connection (BaseConnection):
     def cmd_getdata (self, data):
         blocks = []
         for kind, name in caesure.proto.unpack_getdata (data):
-            if kind == bitcoin.OBJ_BLOCK and name in the_block_db:
+            if kind == block_db.OBJ_BLOCK and name in the_block_db:
                 blocks.append (name)
         coro.spawn (self.send_blocks, blocks)
         
@@ -468,14 +466,14 @@ class Connection (BaseConnection):
         self.send_packet ('addr', payload)
 
     def cmd_tx (self, data):
-        tx = bitcoin.TX()
+        tx = block_db.TX()
         tx.unpack (data)
         the_txn_pool.add (tx)
 
     def cmd_block (self, data):
         if not the_hoover.running:
             # normal operation, feed new blocks in
-            b = bitcoin.BLOCK()
+            b = block_db.BLOCK()
             b.unpack (data)
             b.check_rules()
             the_block_db.add (b.name, b)
@@ -483,7 +481,7 @@ class Connection (BaseConnection):
             #  by a block that shows up *later* - we need to manually
             #  request the missing link[s].
             if b.prev_block not in the_block_db.blocks:
-                self.getdata ([(bitcoin.OBJ_BLOCK, b.prev_block)])
+                self.getdata ([(block_db.OBJ_BLOCK, b.prev_block)])
 
     def cmd_notfound (self, data):
         # XXX need to use this in hoover.wait_for!
@@ -532,8 +530,8 @@ class Connection (BaseConnection):
         if hashes is None:
             hashes = the_block_db.set_for_getblocks()
             if not hashes:
-                hashes = [bitcoin.genesis_block_hash]
-        hashes.append (bitcoin.ZERO_NAME)
+                hashes = [block_db.genesis_block_hash]
+        hashes.append (block_db.ZERO_NAME)
         chain = [hashes[0]]
         while 1:
             # getheaders and getblocks have identical args/layout.
@@ -637,7 +635,7 @@ class TransactionPool:
                     tx.verify0 (i, redeem)
                     i += 1
                 self.pool[tx.name] = tx
-            except caesure.script.ScriptFailure:
+            except script.ScriptFailure:
                 W ('[tx %064x script failed]' % (tx.name,))
             except KeyError:
                 #W ('[tx %064x missing inputs]' % (tx.name,))
@@ -679,7 +677,7 @@ def new_block_thread():
             for c in the_connection_map.values():
                 if c.packet_count:
                     try:
-                        c.send_invs ([(bitcoin.OBJ_BLOCK, name)])
+                        c.send_invs ([(block_db.OBJ_BLOCK, name)])
                         nsent += 1
                     except OSError:
                         # let the gen_packets loop deal with this.
@@ -760,7 +758,7 @@ def go (args):
     global verbose
     import coro
     the_addr_cache = AddressCache()
-    the_block_db = bitcoin.BlockDB()
+    the_block_db = block_db.BlockDB()
     the_hoover = BlockHoover()
     the_txn_pool = TransactionPool()
     # install a real resolver

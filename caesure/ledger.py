@@ -2,23 +2,19 @@
 
 import os
 import struct
-from caesure._script import parse_script
-from caesure.script import pprint_script, OPCODES
-from bitcoin import BlockDB, key_to_address, rhash, bcrepr
-import caesure.proto
-import cPickle
-import bitcoin
-import coro
 
+from caesure.script import pprint_script, OPCODES, parse_script
+from caesure.block_db import BlockDB
+from caesure.bitcoin import key_to_address, rhash, bcrepr, ZERO_NAME, Name
 from caesure.txfaa import UTXO_Map, UTXO_Scan_Map
+
+import coro
 
 from pprint import pprint as pp
 
 import sys
 
 W = sys.stderr.write
-
-pack_u64 = caesure.proto.pack_u64
 
 def compute_rewards (n):
     l = []
@@ -83,7 +79,7 @@ class LedgerState:
 
     def __init__ (self, load=False):
         self.outpoints = UTXO_Map()
-        self.block_name = bitcoin.ZERO_NAME
+        self.block_name = ZERO_NAME
         self.height = -1
         self.total = 0
         self.lost = 0
@@ -150,7 +146,7 @@ class LedgerState:
             assert (info[0] == self.cache_version)  # version
             [_, self.height, self.block_name, self.total, self.lost, self.fees, size] = info
             W (' height = %d ...' % (self.height,))
-            self.block_name = bitcoin.Name (self.block_name)
+            self.block_name = Name (self.block_name)
             n = [0]
             def gen():
                 while 1:
@@ -239,7 +235,7 @@ def catch_up (db):
             while 1:
                 r.append(name)
                 name = db.prev[name]
-                if name == bitcoin.ZERO_NAME:
+                if name == ZERO_NAME:
                     break
             r.reverse()
             return r
@@ -266,9 +262,9 @@ def catch_up (db):
     # [XXX looking into using a disk i/o thread for this?]
     coro.set_latency_warning (0)
     for name in most_names:
-        if i % 1000 == 0:
-            W('%d ' % (i,))
         if i == ledger.height + 1:
+            if i % 100 == 0:
+                W('%d ' % (i,))
             block = db[name]
             ledger.feed_block (block, i)
             fed += 1
@@ -299,11 +295,10 @@ def catch_up (db):
 
     W ('topping off recent_blocks...\n')
     recent_blocks = RecentBlocks (ledger, db)
-    print repr(ledger.block_name)
     names = db.next (ledger.block_name)
     while names:
         name = names.pop()
-        print 'adding %r' % (name,)
+        W ('adding %r\n' % (name,))
         recent_blocks.new_block (db[name])
         names += db.next (name)
 
@@ -315,7 +310,7 @@ def catch_up (db):
 if __name__ == '__main__':
     import bitcoin
     db = BlockDB (read_only=True)
-    bitcoin.the_block_db = db
+    #bitcoin.the_block_db = db
     if '-c' not in sys.argv:
         import coro
         import coro.backdoor
