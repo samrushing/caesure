@@ -230,6 +230,15 @@ class BlockHoover:
     def get_live_connection (self):
         return self.live_cv.wait()
 
+    def notify_height (self, conn, height):
+        if height > self.target:
+            # XXX sanity check height by calculating a likely neighborhood given the date.
+            behind = height - self.target
+            self.target = height
+            if behind > 10 and not self.running:
+                # start hoovering
+                coro.spawn (self.go)
+
     def go (self):
         # main hoovering thread.
         # first, get a list of blocks we need to fetch via getheaders.
@@ -270,9 +279,6 @@ class BlockHoover:
             WY ('\n[get_block: %r]' % (coro.compact_traceback(),))
 
     def add_block (self, b):
-        if len(ready) > 1000:
-            W ('\n\n\nwhy am I stalled?\n\n')
-            coro.sleep_relative (1000)
         self.ready[b.prev_block] = b
         if b.name in self.requested:
             self.requested.remove (b.name)
@@ -378,6 +384,7 @@ class Connection (BaseConnection):
     def cmd_version (self, data):
         self.other_version = caesure.proto.unpack_version (data)
         self.send_packet ('verack', '')
+        the_hoover.notify_height (self, self.other_version.start_height)
 
     def cmd_verack (self, data):
         pass
