@@ -37,8 +37,8 @@ def P (msg):
 # these are overriden for testnet
 BITCOIN_PORT = 8333
 MAGIC = '\xf9\xbe\xb4\xd9'
-BLOCKS_PATH = 'blocks.bin'
-METADATA_PATH = 'metadata.bin'
+BLOCKS_PATH = '/usr/local/caesure/blocks.bin'
+METADATA_PATH = '/usr/local/caesure/metadata.bin'
 genesis_block_hash = Name ('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'.decode ('hex')[::-1])
 
 # overridden by commandline argument
@@ -391,15 +391,15 @@ class BlockDB:
             else:
                 size, = struct.unpack ('<Q', size)
                 header = f.read (80)
-                (version, prev_block, merkle_root,
-                 timestamp, bits, nonce) = unpack_block_header (header)
+                b = caesure.proto.BLOCK()
+                b.unpack (header, True)
                 # skip the rest of the block
                 f.seek (size - 80, 1)
                 if f.tell() > eof_pos:
                     break
                 name = Name (dhash (header))
-                bn = 1 + self.block_num[prev_block]
-                self.prev[name] = prev_block
+                bn = 1 + self.block_num[b.prev_block]
+                self.prev[name] = b.prev_block
                 self.block_num[name] = bn
                 self.num_block.setdefault (bn, set()).add (name)
                 self.blocks[name] = pos
@@ -453,7 +453,7 @@ class BlockDB:
                     r.append (name0)
             return r
         else:
-            return set()
+            return []
 
     def add (self, name, block):
         if self.blocks.has_key (name):
@@ -461,6 +461,9 @@ class BlockDB:
         elif not self.block_num.has_key (block.prev_block) and block.prev_block != ZERO_NAME:
             # if we don't have the previous block, there's no
             #  point in remembering it at all.  toss it.
+            # XXX not true.  when we are on an orphaned fork we will see orphans here,
+            #   and we need to process them correctly (i.e., set them aside while we
+            #   request the prev nodes).
             pass
         else:
             self.write_block (name, block)
