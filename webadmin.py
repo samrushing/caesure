@@ -253,7 +253,7 @@ class handler:
             'num: %d' % (db.last_block,),
             H3 ('connections'),
             elem0 ('table'),
-            thead ('#', 'packets', 'address', 'port', 'height', 'version', 'services'),
+            thead ('#', 'packets', 'address', 'port', 'height', 'version', 'services', 'direction'),
         )
         i = 1
         for addr, conn in the_connection_map.iteritems():
@@ -266,7 +266,7 @@ class handler:
                 v = 'N/A'
                 h = 0
                 s = 0
-            PUSH (trow (i, conn.packet_count, ip, port, h, v, s))
+            PUSH (trow (i, conn.packet_count, ip, port, h, v, s, conn.direction))
             i += 1
         PUSH (elem1 ('table'))
 
