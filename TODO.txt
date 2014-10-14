@@ -15,16 +15,12 @@ TODO
 ledger
 ======
 
-Think about a pure-functional data structure representing the current map of live outpoints.
-we can keep a different tree root for each block (including forks), and roll-back would simply
-mean rolling back to that root.  we could keep the last (say) 100 roots with probably little
-impact on memory (since it's all shared anyway).
+Our plan is to use a persistent data structure (a functional AA tree) to implement a 'multiple universes' approach to the
+blockchain: within an area at the front of the chain, each block/fork will have its own version of the ledger, each with a separate
+history.  Each fork will update independently.  When a dead fork has fallen far enough behind, its ledger data is abandoned.
 
-candidates:
-  aa-map: would be nice but it is not pure with deletion. [at least
-    until we write a pure version of delete?]
-  red-black: more likely candidate. need to track down my delete code.
-  red-black: be lazy and use an stl wrapper?
+The persistent data structure is rather expensive compared to an stl map, so the latter is used only for an initial scan.  We'll
+probably distribute utxo cache files (currently ~600MB) via bittorrent or other means.
 
 memory requirements: characterize.
 
