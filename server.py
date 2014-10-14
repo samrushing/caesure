@@ -193,17 +193,21 @@ class BaseConnection:
     def get_block (self, name, timeout=5):
         "request a particular block.  return it, or raise TimeoutError"
         self.getdata ([(bitcoin.OBJ_BLOCK, name)])
-        while 1:
+        for i in range (5):
             _, data = coro.with_timeout (timeout, self.wait_for, 'block')
             b = bitcoin.BLOCK()
             b.unpack (data)
+            the_hoover.log ('%r got' % (b.name,))
             if b.name == name:
                 return b
+            else:
+                W ('\n[get_block: wrong block? %r != %r]' % (b.name, name))
+        raise ValueError
 
     def get_tx (self, name, timeout=5):
         "request a particular tx.  return it, or raise TimeoutError"
         self.getdata ([(bitcoin.OBJ_TX, name)])
-        while 1:
+        for i in range (5):
             _, data = coro.with_timeout (timeout, self.wait_for, 'tx')
             tx = bitcoin.TX()
             tx.unpack (data)
@@ -226,6 +230,10 @@ class BlockHoover:
         self.target = 0
         self.running = False
         self.live_cv = coro.condition_variable()
+        self.debug = open ('/tmp/hoover.log', 'wb')
+
+    def log (self, msg):
+        self.debug.write ('%s %s\n' % (time.ctime(), msg))
 
     def get_live_connection (self):
         return self.live_cv.wait()
@@ -242,23 +250,38 @@ class BlockHoover:
     def go (self):
         # main hoovering thread.
         # first, get a list of blocks we need to fetch via getheaders.
-        if not the_block_db.num_block:
+        db = the_block_db
+        if not db.num_block:
             self.queue.push (bitcoin.genesis_block_hash)
             self.qset.add (bitcoin.genesis_block_hash)
-        c = self.get_live_connection()
-        W ('[getheaders start]')
-        t0 = bitcoin.timer()
-        names = c.getheaders()
-        W ('[getheaders stop %.2f]' % (t0.end(),))
-        for name in names:
-            self.queue.push (name)
-            self.qset.add (name)
         try:
             self.running = True
+            c = self.get_live_connection()
+            W ('[getheaders start]')
+            t0 = bitcoin.timer()
+            names = c.getheaders()
+            W ('[getheaders stop %.2f]' % (t0.end(),))
+            for name in names:
+                self.queue.push (name)
+                self.qset.add (name)
             # if relay=False and |connections|=1, this way we get at least one live packet.
             c.ping()
             while len(self.queue):
+                if len(self.ready) > 100:
+                    names = db.num_block[db.last_block]
+                    W ('stalled: names=%r\n' % (names,))
+                    self.debug.flush()
+                    coro.sleep_relative (1000)
+                    stalled = list(names)[0]
+                    # where is this in the queue?
+                    for j, x in enumerate (self.queue):
+                        if x == stalled:
+                            W ('found in position %d\n' % (j,))
+                            break
+                    if x != stalled:
+                        W ('not found in queue\n')
                 name = self.queue.pop()
+                self.log ('%r popped' % (name,))
                 self.qset.remove (name)
                 c = self.get_live_connection()
                 coro.spawn (self.get_block, c, name)
@@ -268,10 +291,13 @@ class BlockHoover:
     def get_block (self, conn, name):
         try:
             self.requested.add (name)
+            self.log ('%r asked' % (name,))
             self.add_block (conn.get_block (name))
-        except coro.TimeoutError:
+            self.log ('%r received' % (name,))
+        except (coro.TimeoutError, ValueError):
             # let some other connection try it...
             W ('[retry %r]' % (name,))
+            self.log ('%r retried' % (name,))
             self.queue.push_front (name)
             self.qset.add (name)
             self.requested.remove (name)
@@ -522,9 +548,10 @@ class Connection (BaseConnection):
                         chain.append (block.name)
                     else:
                         W ('unexpected fork in getheaders from %r\n' % (self,))
-                        break
+                        raise ValueError
                 hashes[0] = chain[-1]
-        return chain
+        # we already have chain[0]
+        return chain[1:]
 
 class AddressCache:
 
