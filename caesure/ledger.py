@@ -1,5 +1,6 @@
 # -*- Mode: Python -*-
 
+import os
 import struct
 from caesure._script import parse_script
 from caesure.script import pprint_script, OPCODES
@@ -115,8 +116,7 @@ class LedgerState:
 
     def save_state (self):
         from coro.asn1.data_file import DataFileWriter
-        # XXX use a .tmp file and os.rename
-        f = open (self.save_path, 'wb')
+        f = open (self.save_path + '.tmp', 'wb')
         df = DataFileWriter (f)
         df.write_object ([
             self.cache_version,
@@ -131,8 +131,11 @@ class LedgerState:
         for item in self.outpoints:
             df.write_object (item)
             n += 1
-        W ('[saved outpoints %d/%d entries]' % (len(self.outpoints), n))
+            if n % 1000 == 999:
+                coro.yield_slice()
         f.close()
+        os.rename (self.save_path + '.tmp', self.save_path)
+        W ('[saved outpoints %d/%d entries]' % (len(self.outpoints), n))
 
     def load_state (self, path=None):
         from coro.asn1.data_file import DataFileReader
