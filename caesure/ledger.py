@@ -310,7 +310,6 @@ def catch_up (db):
 if __name__ == '__main__':
     import bitcoin
     db = BlockDB (read_only=True)
-    #bitcoin.the_block_db = db
     if '-c' not in sys.argv:
         import coro
         import coro.backdoor

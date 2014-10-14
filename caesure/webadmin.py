@@ -5,7 +5,6 @@ import sys
 import time
 import zlib
 import coro
-import bitcoin
 
 from urllib import splitquery
 from urlparse import parse_qs
@@ -13,7 +12,7 @@ from cgi import escape
 from caesure._script import parse_script
 from caesure.script import pprint_script, OPCODES
 from caesure.proto import hexify, Name, name_from_hex
-from bitcoin import key_to_address, rhash
+from caesure.bitcoin import *
 
 from html_help import *
 
@@ -189,8 +188,9 @@ def describe_iscript (p):
 
 class handler:
 
-    def __init__ (self):
+    def __init__ (self, global_state):
         self.pending_send = []
+        self.G = global_state
 
     def match (self, request):
         return request.path.startswith ('/admin/')
@@ -240,12 +240,13 @@ class handler:
             space2 + A ('status', href="/admin/status"),
             space2 + A ('blocks', href="/admin/block"),
             space2 + A ('pool', href="/admin/pool"),
+            space2 + A ('ledger', href="/admin/ledger"),
             space2 + A ('connect', href="/admin/connect"),
             space2 + A ('shutdown', href="/admin/shutdown"),
         )
 
     def cmd_status (self, request, PUSH, parts):
-        db = the_block_db
+        db = self.G.block_db
         PUSH (
             H3 ('last block'),
             'name[s]: %s' % (escape (', '.join ([repr(x) for x in db.num_block[db.last_block]]))),
@@ -256,7 +257,7 @@ class handler:
             thead ('#', 'packets', 'address', 'port', 'height', 'version', 'services', 'direction'),
         )
         i = 1
-        for addr, conn in the_connection_map.iteritems():
+        for addr, conn in self.G.connection_map.iteritems():
             ip, port = conn.other_addr
             if conn.other_version is not None:
                 v = conn.other_version.sub_version_num
@@ -292,7 +293,7 @@ class handler:
         PUSH (elem1 ('table'))
 
     def cmd_block (self, request, PUSH, parts):
-        db = the_block_db
+        db = self.G.block_db
         space2 = ent ('nbsp') * 2
         if len(parts) == 2 and len (parts[1]):
             name = parts[1]
@@ -309,12 +310,12 @@ class handler:
             PUSH (
                 elem0 ('br'),
                 space2,
-                A ('First Block', href='/admin/block/%064x' % (bitcoin.genesis_block_hash,)),
+                A ('First Block', href='/admin/block/%064x' % (genesis_block_hash,)),
                 space2,
                 A ('Last Block', href='/admin/block/'),
                 elem0 ('br'),
             )
-            if name != bitcoin.genesis_block_hash:
+            if name != genesis_block_hash:
                 PUSH (space2, A ('Prev Block', href='/admin/block/%064x' % (db.prev[name],)))
             else:
                 PUSH (space2, 'Prev Block', elemz ('br'))
@@ -361,7 +362,7 @@ class handler:
             else:
                 kind = kind + ':'
             k = '%s%s' % (kind, addr)
-            PUSH (trow (i, bitcoin.bcrepr (value), k))
+            PUSH (trow (i, bcrepr (value), k))
         #RP ('</table></td><td>%s</td></tr>' % tx.lock_time,)
         PUSH (elems1 ('table', 'td', 'tr'))
 
@@ -370,8 +371,7 @@ class handler:
             H3 ('transaction pool'),
             elem0 ('table'),
         )
-        from __main__ import the_txn_pool
-        txns = the_txn_pool.pool.values()
+        txns = self.G.txn_pool.pool.values()
         i = 0
         for tx in txns:
             self.dump_tx (PUSH, tx, i)
@@ -379,11 +379,11 @@ class handler:
         PUSH (elem1 ('table'))
 
     def cmd_reload (self, request, PUSH, parts):
-        new_hand = reload (sys.modules['webadmin'])
-        from __main__ import h
+        new_hand = reload (sys.modules['caesure.webadmin'])
+        h = self.G.http_server
         hl = h.handlers
+        h0 = new_hand.handler (self.G)
         for i in range (len (h.handlers)):
-            h0 = new_hand.handler()
             if isinstance (hl[i], coro.http.handlers.auth_handler) and hl[i].handler is self:
                 hl[i].handler = h0
                 break
@@ -391,6 +391,7 @@ class handler:
                 hl[i] = h0
                 break
         request.push ('<h3>[reloaded]</h3>')
+        G.webadmin_handler = h0
         self.cmd_status (request, PUSH, parts)
 
     def match_form (self, qparts, names):
@@ -417,6 +418,23 @@ class handler:
             elemz ('input', type="submit", value="Connect"),
         )
 
+    def cmd_ledger (self, request, PUSH, parts):
+        r = self.G.recent_blocks
+        tips = r.tips.items()
+        tips.sort()
+        PUSH (H2 ('ledger tips'))
+        for height, lx in tips:
+            PUSH (
+                autotable ([
+                    ('height', lx.height),
+                    ('total', bcrepr (lx.total + lx.lost)),
+                    ('live', bcrepr (lx.total)),
+                    ('lost', bcrepr (lx.lost)),
+                    ('fees', bcrepr (lx.fees)),
+                    ('|utxo|', len(lx.outpoints)),
+                ])
+            )
+
     def cmd_shutdown (self, request, PUSH, parts):
         request.push (H3 ('Shutting down...'))
         request.done()
@@ -425,7 +443,8 @@ class handler:
 
 
 def chain_gen (name):
-    db = the_block_db
+    from __main__ import G
+    db = G.block_db
     while 1:
         names = db.next (name)
         if len(names) > 1:

@@ -1,8 +1,5 @@
 # -*- Mode: Python -*-
 
-# should probably rename this network.py
-
-
 import coro
 import pickle
 import random
@@ -19,6 +16,8 @@ from caesure import proto
 from caesure import script
 
 from caesure.bitcoin import *
+
+from caesure.ansi import *
 
 ticks_to_sec = coro.tsc_time.ticks_to_sec
 
@@ -46,32 +45,10 @@ def is_routable (addr):
 def secs_since (t0):
     return float (coro.now - t0) / coro.ticks_per_sec
 
-W = coro.write_stderr
-
-# bright = 30 + n:
-#   0    1    2      3     4     5      6    7
-# Black Red Green Yellow Blue Magenta Cyan White
-
-def ansi (m, color):
-    return (('\x1b[1;%dm' % color) + m + '\x1b[0m')
-
-def WT (m):
-    W (ansi (m, 31))
-
-def WF (m):
-    W (ansi (m, 34))
-
-def WY (m):
-    W (ansi (m, 33))
-
-the_connection_map = {}
-the_block_db = None
-verbose = False
-
 def get_random_connection():
     "get a random live connection"
     conns = []
-    for addr, c in the_connection_map.iteritems():
+    for addr, c in G.connection_map.iteritems():
         if secs_since (c.last_packet) < 30:
             conns.append (c)
     if len(conns):
@@ -135,11 +112,11 @@ class BaseConnection:
                 struct.pack ('<II', len(payload), checksum),
                 payload
             ])
-            if verbose and command not in ('ping', 'pong'):
+            if G.verbose and command not in ('ping', 'pong'):
                 WT (' ' + command)
 
     def get_our_block_height (self):
-        return the_block_db.last_block
+        return G.block_db.last_block
 
 
     def send_version (self):
@@ -166,7 +143,7 @@ class BaseConnection:
                 break
             magic, command, length, checksum = struct.unpack ('<I12sII', data)
             command = command.strip ('\x00')
-            if verbose and command not in ('ping', 'pong'):
+            if G.verbose and command not in ('ping', 'pong'):
                 WF (' ' + command)
             self.packet_count += 1
             self.header = magic, command, length
@@ -175,11 +152,11 @@ class BaseConnection:
                 payload = self.stream.read_exact (length)
             else:
                 payload = ''
-            the_hoover.live_cv.wake_one (self)
+            G.hoover.live_cv.wake_one (self)
             yield (command, payload)
 
     def getblocks (self):
-        hashes = the_block_db.set_for_getblocks()
+        hashes = G.block_db.set_for_getblocks()
         hashes.append (block_db.ZERO_NAME)
         self.send_packet ('getblocks', caesure.proto.pack_getblocks (self.version, hashes))
 
@@ -195,7 +172,7 @@ class BaseConnection:
             _, data = coro.with_timeout (timeout, self.wait_for, 'block')
             b = block_db.BLOCK()
             b.unpack (data)
-            the_hoover.log ('%r got' % (b.name,))
+            G.hoover.log ('%r got' % (b.name,))
             if b.name == name:
                 return b
             else:
@@ -248,7 +225,7 @@ class BlockHoover:
     def go (self):
         # main hoovering thread.
         # first, get a list of blocks we need to fetch via getheaders.
-        db = the_block_db
+        db = G.block_db
         if not db.num_block:
             self.queue.push (block_db.genesis_block_hash)
             self.qset.add (block_db.genesis_block_hash)
@@ -309,7 +286,7 @@ class BlockHoover:
         # we may have several blocks waiting to be chained
         #  in by the arrival of a missing link...
         while 1:
-            if the_block_db.has_key (b.prev_block) or (b.prev_block == block_db.ZERO_NAME):
+            if G.block_db.has_key (b.prev_block) or (b.prev_block == block_db.ZERO_NAME):
                 del self.ready[b.prev_block]
                 self.block_to_db (b.name, b)
                 if self.ready.has_key (b.name):
@@ -325,7 +302,7 @@ class BlockHoover:
         except BadState as reason:
             W ('*** bad block: %s %r' % (name, reason))
         else:
-            the_block_db.add (name, b)
+            G.block_db.add (name, b)
 
 class Connection (BaseConnection):
 
@@ -343,15 +320,15 @@ class Connection (BaseConnection):
         coro.spawn (self.go)
 
     def get_our_block_height (self):
-        return the_block_db.last_block
+        return G.block_db.last_block
 
     def go (self):
         try:
-            if the_connection_map.has_key (self.other_addr):
+            if G.connection_map.has_key (self.other_addr):
                 W ('duplicate? %r\n' % (self.other_addr,))
                 return
             else:
-                the_connection_map[self.other_addr] = self
+                G.connection_map[self.other_addr] = self
             W ('starting %s connection us: %r them: %r\n' % (self.direction, self.my_addr, self.other_addr))
             try:
                 if self.direction == 'outgoing':
@@ -369,11 +346,11 @@ class Connection (BaseConnection):
                 pass
         finally:
             W ('stopping %s connection us: %r them: %r\n' % (self.direction, self.my_addr, self.other_addr))
-            del the_connection_map[self.other_addr]
+            del G.connection_map[self.other_addr]
             if self.direction == 'incoming':
-                in_conn_sem.release (1)
+                G.in_conn_sem.release (1)
             else:
-                out_conn_sem.release (1)
+                G.out_conn_sem.release (1)
 
     def check_command_name (self, command):
         for ch in command:
@@ -408,27 +385,27 @@ class Connection (BaseConnection):
     def cmd_version (self, data):
         self.other_version = caesure.proto.unpack_version (data)
         self.send_packet ('verack', '')
-        the_hoover.notify_height (self, self.other_version.start_height)
+        G.hoover.notify_height (self, self.other_version.start_height)
 
     def cmd_verack (self, data):
         pass
 
     def cmd_addr (self, data):
         for timestamp, entry in caesure.proto.unpack_addr (data):
-            the_addr_cache.add (timestamp, entry)
+            G.addr_cache.add (timestamp, entry)
 
     def cmd_inv (self, data):
         pairs = caesure.proto.unpack_inv (data)
         for pair in pairs:
             self.known.add (pair)
-        if not the_hoover.running:
+        if not G.hoover.running:
             to_fetch = []
             for kind, name in pairs:
                 if kind == block_db.OBJ_BLOCK:
-                    if name not in the_block_db:
+                    if name not in G.block_db:
                         to_fetch.append ((kind, name))
                 elif kind == block_db.OBJ_TX:
-                    if name not in the_txn_pool:
+                    if name not in G.txn_pool:
                         to_fetch.append ((kind, name))
             if to_fetch:
                 self.getdata (to_fetch)
@@ -436,14 +413,14 @@ class Connection (BaseConnection):
     def cmd_getdata (self, data):
         blocks = []
         for kind, name in caesure.proto.unpack_getdata (data):
-            if kind == block_db.OBJ_BLOCK and name in the_block_db:
+            if kind == block_db.OBJ_BLOCK and name in G.block_db:
                 blocks.append (name)
         coro.spawn (self.send_blocks, blocks)
         
     def send_blocks (self, blocks):
         for name in blocks:
             self.send_packet (
-                'block', the_block_db.get_block (name)
+                'block', G.block_db.get_block (name)
             )
 
     def cmd_getaddr (self, data):
@@ -451,7 +428,7 @@ class Connection (BaseConnection):
         # get our list of active peers
         three_hours = 3 * 60 * 60
         r = []
-        nodes = the_connection_map.values()
+        nodes = G.connection_map.values()
         random.shuffle (nodes)
         for v in nodes:
             if v is not self and secs_since (v.last_packet) < three_hours:
@@ -468,19 +445,19 @@ class Connection (BaseConnection):
     def cmd_tx (self, data):
         tx = block_db.TX()
         tx.unpack (data)
-        the_txn_pool.add (tx)
+        G.txn_pool.add (tx)
 
     def cmd_block (self, data):
-        if not the_hoover.running:
+        if not G.hoover.running:
             # normal operation, feed new blocks in
             b = block_db.BLOCK()
             b.unpack (data)
             b.check_rules()
-            the_block_db.add (b.name, b)
+            G.block_db.add (b.name, b)
             # this happens when our last block has been orphaned
             #  by a block that shows up *later* - we need to manually
             #  request the missing link[s].
-            if b.prev_block not in the_block_db.blocks:
+            if b.prev_block not in G.block_db.blocks:
                 self.getdata ([(block_db.OBJ_BLOCK, b.prev_block)])
 
     def cmd_notfound (self, data):
@@ -518,9 +495,9 @@ class Connection (BaseConnection):
             self.known.update (pairs0)
 
     def test_gh (self, back):
-        db = the_block_db
+        db = G.block_db
         save, db.last_block = db.last_block, db.last_block - back
-        hashes = the_block_db.set_for_getblocks()
+        hashes = G.block_db.set_for_getblocks()
         db.last_block = save
         return self.getheaders (hashes)
 
@@ -528,7 +505,7 @@ class Connection (BaseConnection):
         # on this connection only, download the entire chain of headers from our
         #   tip to the other side's tip.
         if hashes is None:
-            hashes = the_block_db.set_for_getblocks()
+            hashes = G.block_db.set_for_getblocks()
             if not hashes:
                 hashes = [block_db.genesis_block_hash]
         hashes.append (block_db.ZERO_NAME)
@@ -631,7 +608,7 @@ class TransactionPool:
             try:
                 i = 0
                 for outpoint, oscript, sequence in tx.inputs:
-                    amt, redeem = the_txmap[outpoint]
+                    amt, redeem = G.txmap[outpoint]
                     tx.verify0 (i, redeem)
                     i += 1
                 self.pool[tx.name] = tx
@@ -645,7 +622,7 @@ class TransactionPool:
 
     def new_block_thread (self):
         while 1:
-            b = the_block_db.new_block_cv.wait()
+            b = G.block_db.new_block_cv.wait()
             in_pool = 0
             total = len(self.pool)
             for tx in b.transactions:
@@ -663,18 +640,18 @@ def status_thread():
         coro.sleep_relative (10)
         coro.write_stderr (
             '[clients:%d addr_cache:%d]\n' % (
-                len(the_connection_map),
-                len(the_addr_cache.cache),
+                len(G.connection_map),
+                len(G.addr_cache.cache),
             )
         )
 
 def new_block_thread():
     while 1:
-        block = the_block_db.new_block_cv.wait()
+        block = G.block_db.new_block_cv.wait()
         name = block.name
         nsent = 0
-        if not the_hoover.running:
-            for c in the_connection_map.values():
+        if not G.hoover.running:
+            for c in G.connection_map.values():
                 if c.packet_count:
                     try:
                         c.send_invs ([(block_db.OBJ_BLOCK, name)])
@@ -682,15 +659,26 @@ def new_block_thread():
                     except OSError:
                         # let the gen_packets loop deal with this.
                         pass
-        #the_txmap.feed_block (block, block.get_height())
+        #G.txmap.feed_block (block, block.get_height())
         W ('[new_block %d]' % (nsent,))
+
+def new_connection_thread():
+    # give the servers time to start up and set addresses
+    coro.sleep_relative (2)
+    while 1:
+        G.out_conn_sem.acquire (1)
+        addr1 = new_random_addr()
+        addr0 = get_my_addr (addr1)
+        Connection (addr0, addr1)
+        # avoid hammering the internets
+        coro.sleep_relative (1)
 
 def new_random_addr():
     for i in range (100):
-        (ip, port) = the_addr_cache.random()
-        if (ip, port) not in the_connection_map:
+        (ip, port) = G.addr_cache.random()
+        if (ip, port) not in G.connection_map:
             if ip == '192.33.90.253':
-                # filter out eth switzerland
+                # filter out eth switzerland (they comprise 25% of all addrs).
                 pass
             else:
                 return (ip, port)
@@ -725,7 +713,7 @@ def serve (addr):
     W ('starting server on %r\n' % (addr0,))
     while 1:
         conn, addr1 = s.accept()
-        in_conn_sem.acquire (1)
+        G.in_conn_sem.acquire (1)
         Connection (addr0, addr1, sock=conn)
 
 def get_my_addr (other):
@@ -742,29 +730,26 @@ def get_my_addr (other):
 
 def connect (addr):
     addr1 = parse_addr_arg (addr)
-    out_conn_sem.acquire (1)
+    G.out_conn_sem.acquire (1)
     addr0 = get_my_addr (addr1)
     Connection (addr0, addr1)
 
-def go (args):
-    # XXX use an object to hold all this global state.
-    global the_addr_cache
-    global the_block_db
-    global the_hoover
-    global the_recent_blocks
-    global the_txn_pool
-    global in_conn_sem, out_conn_sem
-    global h
-    global verbose
+def go (args, global_state):
+    global G
+    G = global_state
+    G.args = args
+    G.addr_cache = AddressCache()
+    G.block_db = block_db.BlockDB()
+    G.hoover = BlockHoover()
+    G.txn_pool = TransactionPool()
+    G.recent_blocks = ledger.catch_up (G.block_db)
+    G.verbose = args.verbose
+    G.connection_map = {}
+
+    # needed for the sub-imports below...
     import coro
-    the_addr_cache = AddressCache()
-    the_block_db = block_db.BlockDB()
-    the_hoover = BlockHoover()
-    the_txn_pool = TransactionPool()
     # install a real resolver
     coro.dns.cache.install()
-    the_recent_blocks = ledger.catch_up (the_block_db)
-    verbose = args.verbose
     if args.monitor:
         import coro.backdoor
         coro.spawn (coro.backdoor.serve, unix_path='/tmp/caesure.bd')
@@ -775,19 +760,24 @@ def go (args):
             users[u] = p
     if args.webui:
         import coro.http
-        import webadmin
+        import caesure.webadmin
         import zlib
-        h = coro.http.server()
+        G.http_server = h = coro.http.server()
+        G.webadmin_handler = caesure.webadmin.handler (G)
         if users:
-            h.push_handler (coro.http.handlers.auth_handler (users, webadmin.handler()))
+            h.push_handler (coro.http.handlers.auth_handler (users, G.webadmin_handler))
             coro.spawn (h.start, (('', 8380)))
         else:
-            h.push_handler (webadmin.handler())
+            h.push_handler (G.webadmin_handler)
             coro.spawn (h.start, (('127.0.0.1', 8380)))
         h.push_handler (coro.http.handlers.coro_status_handler())
-        h.push_handler (coro.http.handlers.favicon_handler (zlib.compress (webadmin.favicon)))
-    in_conn_sem = coro.semaphore (args.incoming)
-    out_conn_sem = coro.semaphore (args.outgoing)
+        h.push_handler (
+            coro.http.handlers.favicon_handler (
+                zlib.compress (caesure.webadmin.favicon)
+            )
+        )
+    G.in_conn_sem = coro.semaphore (args.incoming)
+    G.out_conn_sem = coro.semaphore (args.outgoing)
     if args.relay:
         Connection.relay = True
     if args.serve:
@@ -797,30 +787,6 @@ def go (args):
         for addr in args.connect:
             coro.spawn (connect, addr)
     #coro.spawn (status_thread)
-    coro.spawn (the_addr_cache.purge_thread)
+    coro.spawn (G.addr_cache.purge_thread)
     coro.spawn (new_block_thread)
-    # give the servers time to start up and set addresses
-    coro.sleep_relative (2)
-    while 1:
-        out_conn_sem.acquire (1)
-        addr1 = new_random_addr()
-        addr0 = get_my_addr (addr1)
-        Connection (addr0, addr1)
-        # avoid hammering the internets
-        coro.sleep_relative (1)
-
-if __name__ == '__main__':
-    import argparse
-    p = argparse.ArgumentParser()
-    p.add_argument ('-o', '--outgoing', type=int, help="total number of outgoing connections", default=10)
-    p.add_argument ('-i', '--incoming', type=int, help="total number of incoming connections", default=10)
-    p.add_argument ('-s', '--serve', action="append", help="serve on this address", metavar='IP:PORT')
-    p.add_argument ('-c', '--connect', action="append", help="connect to this address", metavar='IP:PORT')
-    p.add_argument ('-m', '--monitor', action='store_true', help='run the monitor on /tmp/caesure.bd')
-    p.add_argument ('-a', '--webui', action='store_true', help='run the web interface at http://localhost:8380/admin/')
-    p.add_argument ('-r', '--relay', action='store_true', help='[hack] set relay=True', default=False)
-    p.add_argument ('-u', '--user', action='append', help='webui user (will listen on INADDR_ANY)', metavar='USER:PASS')
-    p.add_argument ('-v', '--verbose', action='store_true', help='show verbose packet flow')
-    args = p.parse_args()
-    coro.spawn (go, args)
-    coro.event_loop()
+    coro.spawn (new_connection_thread)
