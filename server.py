@@ -63,6 +63,9 @@ def WT (m):
 def WF (m):
     W (ansi (m, 34))
 
+def WY (m):
+    W (ansi (m, 33))
+
 the_connection_map = {}
 the_block_db = None
 verbose = False
@@ -187,7 +190,7 @@ class BaseConnection:
         # note: pack_getdata == pack_inv
         self.send_packet ('getdata', caesure.proto.pack_inv (items))
 
-    def get_block (self, name, timeout=30):
+    def get_block (self, name, timeout=5):
         "request a particular block.  return it, or raise TimeoutError"
         self.getdata ([(bitcoin.OBJ_BLOCK, name)])
         while 1:
@@ -197,7 +200,7 @@ class BaseConnection:
             if b.name == name:
                 return b
 
-    def get_tx (self, name, timeout=30):
+    def get_tx (self, name, timeout=5):
         "request a particular tx.  return it, or raise TimeoutError"
         self.getdata ([(bitcoin.OBJ_TX, name)])
         while 1:
@@ -223,82 +226,56 @@ class BlockHoover:
         self.target = 0
         self.running = False
         self.live_cv = coro.condition_variable()
-        self.empty_cv = coro.condition_variable()
 
     def get_live_connection (self):
         return self.live_cv.wait()
 
-    def notify_height (self, conn, height):
-        if height > self.target:
-            # XXX sanity check height by calculating a likely neighborhood given the date.
-            behind = height - self.target
-            self.target = height
-            if behind > 10 and not self.running:
-                # start the getblocks thread
-                coro.spawn (self.go)
-
     def go (self):
         # main hoovering thread.
-        if the_block_db.last_block == 0:
-            self.queue.push_front (bitcoin.genesis_block_hash)
+        # first, get a list of blocks we need to fetch via getheaders.
+        if not the_block_db.num_block:
+            self.queue.push (bitcoin.genesis_block_hash)
             self.qset.add (bitcoin.genesis_block_hash)
+        c = self.get_live_connection()
+        W ('[getheaders start]')
+        t0 = bitcoin.timer()
+        names = c.getheaders()
+        W ('[getheaders stop %.2f]' % (t0.end(),))
+        for name in names:
+            self.queue.push (name)
+            self.qset.add (name)
         try:
             self.running = True
-            while the_block_db.last_block < self.target:
-                W ('{hoover0}')
-                if len(self.queue) == 0:
-                    self.getblocks()
-                if len(self.queue) == 0:
-                    break
-                else:
-                    while len(self.queue):
-                        W ('{hoover1}')
-                        name = self.queue.pop()
-                        self.qset.remove (name)
-                        c = self.get_live_connection()
-                        self.requested.add (name)
-                        coro.spawn (self.get_block, c, name)
-                    W ('{waiting on empty cv...}')
-                    self.empty_cv.wait()
+            # if relay=False and |connections|=1, this way we get at least one live packet.
+            c.ping()
+            while len(self.queue):
+                name = self.queue.pop()
+                self.qset.remove (name)
+                c = self.get_live_connection()
+                coro.spawn (self.get_block, c, name)
         finally:
             self.running = False
 
-    def getblocks (self):
-        # add to our queue of blocks to fetch
-        while 1:
-            W ('{getblocks}')
-            c = self.get_live_connection()
-            c.getblocks()
-            # wait til we get the response we want
-            try:
-                _, data = coro.with_timeout (30, c.wait_for, 'inv')
-                pairs = caesure.proto.unpack_inv (data)
-                W ('inv: %r\n' % (pairs,))
-                if len(pairs) and all (x[0] == bitcoin.OBJ_BLOCK for x in pairs):
-                    # yup, that's what we were waiting for...
-                    for _, name in pairs:
-                        if name not in self.qset and name not in the_block_db.blocks:
-                            self.queue.push (name)
-                            self.qset.add (name)
-                    return
-            except coro.TimeoutError:
-                pass
-
     def get_block (self, conn, name):
         try:
+            self.requested.add (name)
             self.add_block (conn.get_block (name))
         except coro.TimeoutError:
             # let some other connection try it...
+            W ('[retry %r]' % (name,))
             self.queue.push_front (name)
             self.qset.add (name)
-            return
+            self.requested.remove (name)
+        except:
+            WY ('\n[get_block: %r]' % (coro.compact_traceback(),))
 
     def add_block (self, b):
+        if len(ready) > 1000:
+            W ('\n\n\nwhy am I stalled?\n\n')
+            coro.sleep_relative (1000)
         self.ready[b.prev_block] = b
         if b.name in self.requested:
             self.requested.remove (b.name)
-            if not len(self.requested):
-                self.empty_cv.wake_one()
         # we may have several blocks waiting to be chained
         #  in by the arrival of a missing link...
         while 1:
@@ -348,14 +325,17 @@ class Connection (BaseConnection):
             W ('starting %s connection us: %r them: %r\n' % (self.direction, self.my_addr, self.other_addr))
             try:
                 if self.direction == 'outgoing':
-                    self.connect()
+                    coro.with_timeout (30, self.connect)
                 self.send_version()
                 for command, payload in self.gen_packets():
                     self.do_command (command, payload)
                     self.last_packet = coro.now
             except OSError:
                 # XXX collect data on errnos
-                W ('OSError: %r\n' % (sys.exc_info()[:2],))
+                #W ('OSError: %r\n' % (sys.exc_info()[:2],))
+                pass
+            except coro.TimeoutError:
+                #W ('TimeoutError: %r\n' % (sys.exc_info()[:2],))
                 pass
         finally:
             W ('stopping %s connection us: %r them: %r\n' % (self.direction, self.my_addr, self.other_addr))
@@ -398,7 +378,6 @@ class Connection (BaseConnection):
     def cmd_version (self, data):
         self.other_version = caesure.proto.unpack_version (data)
         self.send_packet ('verack', '')
-        the_hoover.notify_height (self, self.other_version.start_height)
 
     def cmd_verack (self, data):
         pass
@@ -428,7 +407,7 @@ class Connection (BaseConnection):
         for kind, name in caesure.proto.unpack_getdata (data):
             if kind == bitcoin.OBJ_BLOCK and name in the_block_db:
                 blocks.append (name)
-        coro.spawn (self.send_blocks (blocks))
+        coro.spawn (self.send_blocks, blocks)
         
     def send_blocks (self, blocks):
         for name in blocks:
@@ -483,10 +462,19 @@ class Connection (BaseConnection):
     def cmd_pong (self, data):
         pass
 
+    def ping (self):
+        nonce = struct.pack ('>Q', make_nonce())
+        self.send_packet ('ping', nonce)
+        _, data = coro.with_timeout (10, self.wait_for, 'pong')
+        assert (nonce == data)
+
     def cmd_alert (self, data):
         payload, signature = caesure.proto.unpack_alert (data)
         # XXX verify signature
         W ('alert: sig=%r payload=%r\n' % (signature, payload,))
+
+    def cmd_headers (self, data):
+        pass
 
     def send_invs (self, pairs):
         pairs0 = []
@@ -494,9 +482,42 @@ class Connection (BaseConnection):
             if pair not in self.known:
                 pairs0.append (pair)
         if len(pairs0):
-            W ('{pairs0 = %r}' % (pairs0,))
+            #W ('{pairs0 = %r}' % (pairs0,))
             self.send_packet ('inv', caesure.proto.pack_inv (pairs0))
             self.known.update (pairs0)
+
+    def test_gh (self, back):
+        db = the_block_db
+        save, db.last_block = db.last_block, db.last_block - back
+        hashes = the_block_db.set_for_getblocks()
+        db.last_block = save
+        return self.getheaders (hashes)
+
+    def getheaders (self, hashes=None):
+        # on this connection only, download the entire chain of headers from our
+        #   tip to the other side's tip.
+        if hashes is None:
+            hashes = the_block_db.set_for_getblocks()
+            if not hashes:
+                hashes = [bitcoin.genesis_block_hash]
+        hashes.append (bitcoin.ZERO_NAME)
+        chain = [hashes[0]]
+        while 1:
+            # getheaders and getblocks have identical args/layout.
+            self.send_packet ('getheaders', caesure.proto.pack_getblocks (self.version, hashes))
+            _, data = coro.with_timeout (30, self.wait_for, 'headers')
+            blocks = caesure.proto.unpack_headers (data)
+            if len(blocks) == 0:
+                break
+            else:
+                for block in blocks:
+                    if block.prev_block == chain[-1]:
+                        chain.append (block.name)
+                    else:
+                        W ('unexpected fork in getheaders from %r\n' % (self,))
+                        break
+                hashes[0] = chain[-1]
+        return chain
 
 class AddressCache:
 
@@ -510,12 +531,14 @@ class AddressCache:
         if is_routable (ip):
             self.cache[(ip, port)] = (timestamp, services)
 
+    save_path = '/usr/local/caesure/peers.bin'
+
     def save (self):
-        pickle.dump (self.cache, open ('peers.bin', 'wb'), 2)
+        pickle.dump (self.cache, open (self.save_path, 'wb'), 2)
 
     def load (self):
         try:
-            self.cache = pickle.load (open ('peers.bin', 'rb'))
+            self.cache = pickle.load (open (self.save_path, 'rb'))
             W ('loaded %d addresses\n' % (len(self.cache),))
         except IOError:
             self.seed()
@@ -570,6 +593,8 @@ class TransactionPool:
         return name in self.pool
 
     def add (self, tx):
+        W ('TransactionPool.add() called and ignored\n')
+        return 
         if tx.name not in self.pool:
             try:
                 i = 0
@@ -616,15 +641,16 @@ def new_block_thread():
         block = the_block_db.new_block_cv.wait()
         name = block.name
         nsent = 0
-        for c in the_connection_map.values():
-            if c.packet_count:
-                try:
-                    c.send_invs ([(bitcoin.OBJ_BLOCK, name)])
-                    nsent += 1
-                except OSError:
-                    # let the gen_packets loop deal with this.
-                    pass
-        the_txmap.feed_block (block, block.get_height())
+        if not the_hoover.running:
+            for c in the_connection_map.values():
+                if c.packet_count:
+                    try:
+                        c.send_invs ([(bitcoin.OBJ_BLOCK, name)])
+                        nsent += 1
+                    except OSError:
+                        # let the gen_packets loop deal with this.
+                        pass
+        #the_txmap.feed_block (block, block.get_height())
         W ('[new_block %d]' % (nsent,))
 
 def new_random_addr():
@@ -689,10 +715,11 @@ def connect (addr):
     Connection (addr0, addr1)
 
 def go (args):
+    # XXX use an object to hold all this global state.
     global the_addr_cache
     global the_block_db
     global the_hoover
-    global the_txmap
+    global the_recent_blocks
     global the_txn_pool
     global in_conn_sem, out_conn_sem
     global h
@@ -704,8 +731,7 @@ def go (args):
     the_txn_pool = TransactionPool()
     # install a real resolver
     coro.dns.cache.install()
-    the_txmap = ledger.TransactionMap()
-    the_txmap.catch_up (the_block_db)
+    the_recent_blocks = ledger.catch_up (the_block_db)
     verbose = args.verbose
     if args.monitor:
         import coro.backdoor
