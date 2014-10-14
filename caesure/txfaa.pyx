@@ -59,6 +59,19 @@ cdef class outpoint_set:
                 self.v[i].amt = amt
                 self.v[i].script = script
     
+    cdef get_output (self, index):
+        cdef vector[outpoint].iterator i0
+        cdef int j = 0
+        i0 = self.v.begin()
+        # XXX worth a binary search?
+        while i0 != self.v.end():
+            if deref(i0).index == index:
+                return deref(i0).amt, deref(i0).script
+            else:
+                j += 1
+            inc (i0)
+        raise KeyError (index)
+
     cdef pop_utxo (self, int index, fist f):
         cdef outpoint_set m = outpoint_set([])
         cdef vector[outpoint].iterator i0
@@ -214,7 +227,11 @@ cdef aa_node tree_remove (fist self, aa_node root, char * key, int index):
                 memcpy (self.item.k, self.heir.k, 32)
                 self.item.v = self.heir.v
                 self.item = tree_nil
-                return root0.r
+                # here, we diverge from AA's paper, where he always return root0.r.
+                if root0.r is tree_nil:
+                    return root0.l
+                else:
+                    return root0.r
             else:
                 # not empty yet, don't remove it
                 return root0
@@ -236,6 +253,12 @@ cdef aa_node tree_remove (fist self, aa_node root, char * key, int index):
             return root0
         else:
             return root0
+
+cdef int tree_size (aa_node n):
+    if n is tree_nil:
+        return 0
+    else:
+        return 1 + tree_size (n.l) + tree_size (n.r)
 
 def walk (aa_node n):
     if n is not tree_nil:
@@ -277,6 +300,9 @@ cdef class UTXO_Map:
         self.root = tree_nil
         self.length = 0
 
+    def compute_length (self):
+        return tree_size (self.root)
+
     def __len__ (self):
         return self.length
 
@@ -309,16 +335,24 @@ cdef class UTXO_Map:
         cdef aa_node probe = self._search (key)
         return probe is not tree_nil
 
+    def get_utxo (self, object name, int index):
+        cdef aa_node probe = self._search (name)
+        if probe is not tree_nil:
+            return probe.v.get_output (index)
+        else:
+            raise KeyError (name)
+
     def __iter__ (self):
-        return walk (self.root)
+        # (<txname>, [(<index>, <amt>, <script>), ...])
+        for node in walk (self.root):
+            yield node.key, node.v.val
 
     def verify (self):
         verify (self.root)
 
-    def dump (self):
+    def dump (self, fout):
         for n, d in walk_depth (self.root, 0):
-            #W ('%s%4d %r:%r\n' % ('  ' * d, n.level, n.key[:32].encode('hex'), n.val))
-            W ('%s%4d %r:%d\n' % ('  ' * d, n.level, n.key[:32].encode('hex'), len(n.val)))
+            fout.write ('%s%4d %r:%r\n' % ('  ' * d, n.level, n.key.encode('hex'), n.v))
 
     def new_entry (self, bytes txname, object vals):
         cdef aa_node new_root
@@ -326,20 +360,19 @@ cdef class UTXO_Map:
             raise ValueError
         self.root = tree_insert (self.root, txname, vals)
         self.length += 1
-        assert (txname in self)
-
-#	Wed Jun 25 21:06:28 2014 thread 7 (<function new_block_thread at 0x100621ed8>): error '(\'txfaa.pyx caesure.txfaa.UTXO_Map.pop_utxo (caesure/txfaa.cpp:6671)|333\', "<type \'exceptions.AssertionError\'>", \'\', \'[_coro.pyx coro._coro._wrap1 (coro/_coro.c:11243)|751] [server.py new_block_thread|627] [caesure.txfaa/ledger3.py feed_block|116] [txfaa.pyx caesure.txfaa.UTXO_Map.pop_utxo (caesure/txfaa.cpp:6671)|333]\')'
+        #assert (txname in self)
 
     def pop_utxo (self, bytes txname, int index):
         f = fist()
-        assert (txname in self)
+        #assert (txname in self)
         self.root = tree_remove (f, self.root, txname, index)
         if f.removed:
             self.length -= 1
         return f.amt, f.script
 
 # -------------------------------------------------------------------
-# just for the initial scan, much faster because it's non-persistent.
+# This is a straightforward STL version of the map, used just for
+# the initial scan.  It's much faster because it's non-persistent.
 # -------------------------------------------------------------------
 
 from libcpp.pair cimport pair
@@ -370,6 +403,11 @@ cdef class UTXO_Scan_Map:
         ).first
         for index, amt, script in vals:
             deref(i0).second[index] = (amt, script)
+
+    def __contains__ (self, bytes txname):
+        cdef map[string, outpoint_map].iterator i0
+        i0 = self.m.find (txname)
+        return i0 != self.m.end()
 
     def pop_utxo (self, bytes txname, int index):
         cdef map[string, outpoint_map].iterator i0
