@@ -54,3 +54,8 @@ docs/_build/
 
 # PyBuilder
 target/
+/caesure/_script.c
+/caesure/cryptopp.cpp
+/caesure/proto.c
+/caesure/secp256k1.c
+/caesure/txfaa.cpp
