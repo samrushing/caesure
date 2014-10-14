@@ -5,31 +5,37 @@ Caesure: a python bitcoin server/node
 Your Support Appreciated: 1PDd8exMdhRTLAfNrjBQ9b8DYxkky3cFy1
 ------------------------------------------------------------
 
+name
+----
+
+It's a pun on the words Caesar and Seizure.  "Render unto Caesar..."
+[I realize now that the pun doesn't work in Latin, where Caesar is pronounced 'Kaiser'.  Sorry.]
+
 requirements
 ------------
 
   1. [shrapnel](https://github.com/ironport/shrapnel)
   2. [Cython](http://cython.org/)
+  3. [secp256k1](https://github.com/bitcoin/secp256k1) (optional)
 
-name
-----
+install
+-------
 
-It's a pun on the words Caesar and Seizure.  "Render unto Caesar..."
+    $ sudo python setup.py install
+    $ mkdir /usr/local/caesure/
 
-[I realize now that the pun doesn't work in Latin, where Caesar is pronounced 'Kaiser'.  Sorry.]
+Make sure the /usr/local/caesure directory is writable by the user that will be running caesure.
+
+To avoid a long startup time, fetch a copy of the blockchain and convert it.
+[see below for instructions]
 
 status
 ------
 
 Handles incoming & outgoing connections, does parallel blockchain download.  Caches metadata for quick
-startup.
+startup.  Many-worlds ledger implementation nearly finished.
 
-Still needed:
-
-  * the in-memory ledger
-  * hardening
-
-See TODO.txt for more detail.
+See TODO.txt for more detail on status.
 
 design
 ------
@@ -37,7 +43,7 @@ design
 Since this uses shrapnel, it leaves out Windows users, but still allows bsd, darwin/osx, & linux.
 
 The target platform is a well-connected machine (i.e., in a co-lo facility) with fast disk and lots of memory.
-[XXX place hard memory requirements here]
+[As of October 2014, the process size is approximately 2GB.  I would recommend at least 6GB of memory, the more the merrier.]
 
 Performance-sensitive code is written in Cython, including packet codec, b58, hexify, etc...
 
@@ -45,17 +51,17 @@ The script engine is mostly done.  Needs some work on failing constraints like s
 
 The current plan is to have a pruning ledger in memory (with journalling-style checkpoints to disk).
 Without a ledger, this code is not a full forwarding node, and thus by default the 'relay' flag in
-the outgoin version packet is set to False.
+the outgoing version packet is set to False.
 
 See TODO.txt & ledger.py for details.
 
 usage
 -----
 
-$ python server.py -h::
+$ scripts/caesure -h::
 
-    usage: server.py [-h] [-o OUTGOING] [-i INCOMING] [-s IP:PORT] [-c IP:PORT]
-                     [-m] [-a]
+    usage: caesure [-h] [-o OUTGOING] [-i INCOMING] [-s IP:PORT] [-c IP:PORT] [-m]
+                   [-a] [-r] [-u USER:PASS] [-v]
     
     optional arguments:
       -h, --help            show this help message and exit
@@ -69,18 +75,23 @@ $ python server.py -h::
                             connect to this address
       -m, --monitor         run the monitor on /tmp/caesure.bd
       -a, --webui           run the web interface at http://localhost:8380/admin/
+      -r, --relay           [hack] set relay=True
+      -u USER:PASS, --user USER:PASS
+                            webui user (will listen on INADDR_ANY)
+      -v, --verbose         show verbose packet flow
+
 
 Connecting to a local bitcoind::
 
-    $ python server.py -o 1 -i 0 -c 127.0.0.1:8333 -m -a
+    $ scripts/caesure -o 1 -i 0 -c 127.0.0.1:8333 -m -a
 
 Start up a node with 20 outgoing connections and 0 incoming (i.e., no server)::
 
-    $ python server.py -o 20 -i 0 -c -m -a
+    $ scripts/caesure -o 20 -i 0 -c -m -a
 
 Start up a node with 100 outgoing connections and 100 incoming::
 
-    $ python server.py -o 100 -i 100 -m -a
+    $ scripts/caesure -o 100 -i 100 -m -a
 
 Once up and running, caesure will start downloading the block chain from the network if necessary.
 
@@ -100,9 +111,7 @@ telnet to a unix socket is bsd only, on linux try:
 
 you'll get a python prompt:
 
-    >>> the_block_db
-    <__main__.block_db instance at 0x43bdc8>
-    >>> db = _
+    >>> db = G.block_db
     >>> len(db.blocks)
     10123
     >>> 
@@ -120,8 +129,11 @@ bootstrap.dat
 I recommend that you download the blockchain bootstrap.dat file (via bit torrent), and use that as your starting point.
 The format of the bootstrap.dat file is nearly identical to caesure's native format, and can be converted in-place::
 
-    $ python convert_bootstrap.py bootstrap.dat
-    $ mv bootstrap.dat blocks.bin
+    $ python scripts/convert_bootstrap.py bootstrap.dat
+    $ mv bootstrap.dat /usr/local/caesure/blocks.bin
+
+You should be able to find the torrent here: http://sourceforge.net/projects/bitcoin/files/Bitcoin/blockchain/
+
 
 testnet
 -------
@@ -136,9 +148,9 @@ with the block database.  The block database is written in append-only
 mode, so it's safe to open it read-only from another process, even
 while the client is running.
 
-$ python -i bitcoin.py::
+$ python -i caesure/block_db.py::
 
-    >>> db = BlockDB()
+      >>> db = BlockDB()
     reading metadata...done 5.62 secs (last_block=302294)
     reading block headers...starting at pos 19149083102...(302294)done. scanned 17 blocks in 0.00 secs
     >>> db.last_block
