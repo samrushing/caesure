@@ -3,14 +3,12 @@
 TODO
 ----
 
-* getdata/blocks: before txns, let's forward blocks.
-* ledger: [optional, for full forwarding node] live pruning ledger in memory.
 * hardening.
 * bootstrap.dat (choose one of the three options)
 * use html_help module.
-* proper package installation and directory for blocks.bin etc...
 * investigate using our own copy of ripemd160 (using the one in 'hashlib' is a back-door openssl dep.)
 * sanity check hashes of known blocks
+* match compiler
 
 ledger
 ======
@@ -24,10 +22,13 @@ probably distribute utxo cache files (currently ~600MB) via bittorrent or other 
 
 memory requirements: characterize.
 
-match
-=====
-A match compiler will let us auto-generate code (probably in cython) to match against the various
-transaction types at high speed.  Also, it would be generally useful.
 
+in progress
+-----------
+* ledger: [optional, for full forwarding node] live pruning ledger in memory.
+  mostly done, just need to implement the RecentBlocks/frontier, pool/pools, etc.
 
-
+done
+----
+* getdata/blocks: before txns, let's forward blocks.
+* proper package installation and directory for blocks.bin etc...
