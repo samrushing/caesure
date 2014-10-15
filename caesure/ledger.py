@@ -43,35 +43,53 @@ class RecentBlocks:
     def __init__ (self, ledger, db):
         self.db = db
         # we always begin with one tip.
-        self.tips = {ledger.height : ledger}
+        self.blocks = {ledger.block_name : ledger}
         # we keep a horizon of this many blocks back from the tip.
         self.horizon = 20
 
-    def remove_old_tips (self):
-        # first, find the main chain
-        tip = 0
-        for h, l in self.tips.iteritems():
-            tip = max (h, tip)
-        if tip is 0:
+    def find_tips (self):
+        # build a graph of backward links, the tips we want are
+        #   not in that graph.  [plus we get the oldest link].
+        from __main__ import G
+        db = G.block_db
+        g0 = set()
+        for name, lx in self.blocks.iteritems():
+            back = db.prev[lx.block_name]
+            g0.add (back)
+        g1 = set()
+        oldest = None
+        for name, lx in self.blocks.iteritems():
+            if lx.block_name not in g0:
+                if db.prev.has_key (lx.block_name):
+                    oldest = lx
+                else:
+                    g1.add (lx)
+        return oldest, g1
+
+    def remove_old_blocks (self):
+        # first, find the highest block.
+        blocks = [(lx.height, lx) for lx in self.blocks.values()]
+        blocks.sort()
+        if not blocks:
             return
         else:
-            # now, forget any tips beyond the horizon
-            for h, l in self.tips.items():
-                if tip - h > self.horizon:
-                    del self.tips[h]
+            highest = blocks[-1][0]
+            # now, forget any blocks beyond the horizon
+            for h, lx in blocks:
+                if highest - h > self.horizon:
+                    del self.blocks[lx.block_name]
 
     def new_block (self, block, verify=False):
         tip = None
-        for h, l in self.tips.iteritems():
-            if block.prev_block == l.block_name:
-                tip = h, l
+        for name, lx in self.blocks.iteritems():
+            if block.prev_block == lx.block_name:
+                tip = lx
                 break
         if tip is None:
             raise ValueError ("new block does not chain %064x" % (block.name,))
-        h, l = tip
-        self.tips[h+1] = l.extend (block, h + 1, verify)
-        del self.tips[h]
-        self.remove_old_tips()
+        else:
+            self.blocks[block.name] = tip.extend (block, tip.height + 1, verify)
+            self.remove_old_blocks()
         
 class LedgerState:
 
@@ -217,9 +235,9 @@ class LedgerState:
 
 # XXX a version of this that feeds all blocks, not just the main chain.
 #   hmmmm how about one that feeds them in timestamp order!
-def catch_up (db):
+def catch_up (G):
 
-    global ledger, recent_blocks
+    db = G.block_db
 
     def get_names():
         "get the chain of all block names, ignoring forks"
@@ -294,27 +312,30 @@ def catch_up (db):
         ledger.load_state()
 
     W ('topping off recent_blocks...\n')
-    recent_blocks = RecentBlocks (ledger, db)
+    G.recent_blocks = RecentBlocks (ledger, db)
     names = db.next (ledger.block_name)
     while names:
         name = names.pop()
         W ('adding %r\n' % (name,))
-        recent_blocks.new_block (db[name])
+        G.recent_blocks.new_block (db[name])
         names += db.next (name)
 
     if __name__ == '__main__':
         coro.set_exit()
 
-    return recent_blocks
+    return G.recent_blocks
+
+
 
 if __name__ == '__main__':
+    class GlobalState:
+        pass
+    G = GlobalState()
     import bitcoin
-    db = BlockDB (read_only=True)
+    G.block_db = BlockDB (read_only=True)
     if '-c' not in sys.argv:
         import coro
         import coro.backdoor
-        coro.spawn (catch_up, db)
+        coro.spawn (catch_up, G)
         coro.spawn (coro.backdoor.serve, 8025)
         coro.event_loop()
-
-    
