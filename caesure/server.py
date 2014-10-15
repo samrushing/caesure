@@ -1,6 +1,7 @@
 # -*- Mode: Python -*-
 
 import coro
+import os
 import pickle
 import random
 import re
@@ -540,14 +541,18 @@ class AddressCache:
         if is_routable (ip):
             self.cache[(ip, port)] = (timestamp, services)
 
-    save_path = '/usr/local/caesure/peers.bin'
+    save_path = 'peers.bin'
 
     def save (self):
-        pickle.dump (self.cache, open (self.save_path, 'wb'), 2)
+        from __main__ import G
+        save_path = os.path.join (G.args.base, self.save_path)
+        pickle.dump (self.cache, open (save_path, 'wb'), 2)
 
     def load (self):
+        from __main__ import G
+        save_path = os.path.join (G.args.base, self.save_path)
         try:
-            self.cache = pickle.load (open (self.save_path, 'rb'))
+            self.cache = pickle.load (open (save_path, 'rb'))
             W ('loaded %d addresses\n' % (len(self.cache),))
         except IOError:
             self.seed()

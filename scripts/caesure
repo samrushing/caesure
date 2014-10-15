@@ -20,6 +20,7 @@ p.add_argument ('-a', '--webui', action='store_true', help='run the web interfac
 p.add_argument ('-r', '--relay', action='store_true', help='[hack] set relay=True', default=False)
 p.add_argument ('-u', '--user', action='append', help='webui user (will listen on INADDR_ANY)', metavar='USER:PASS')
 p.add_argument ('-v', '--verbose', action='store_true', help='show verbose packet flow')
+p.add_argument ('-b', '--base', help='data directory', default='/usr/local/caesure', metavar='PATH')
 args = p.parse_args()
 coro.spawn (caesure.server.go, args, G)
 coro.event_loop()

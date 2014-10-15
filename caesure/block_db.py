@@ -9,9 +9,6 @@ import caesure.proto
 from caesure.bitcoin import *
 from caesure.ansi import *
 
-BLOCKS_PATH = '/usr/local/caesure/blocks.bin'
-METADATA_PATH = '/usr/local/caesure/metadata.bin'
-
 # BlockDB file format: (<8 bytes of size> <block>)+
 #
 # Note: this is very close to the bitcoin.dat torrent format, in fact they can be
@@ -21,7 +18,11 @@ METADATA_PATH = '/usr/local/caesure/metadata.bin'
 
 class BlockDB:
 
+    blocks_path = 'blocks.bin'
+    metadata_path = 'metadata.bin'
+
     def __init__ (self, read_only=True):
+        from __main__ import G
         self.read_only = read_only
         self.blocks = {}
         self.prev = {}
@@ -30,8 +31,9 @@ class BlockDB:
         self.last_block = 0
         self.new_block_cv = coro.condition_variable()
         self.file = None
-        if os.path.isfile (METADATA_PATH):
-            f = open (METADATA_PATH, 'rb')
+        metadata_path = os.path.join (G.base, self.metadata_path)
+        if os.path.isfile (metadata_path):
+            f = open (metadata_path, 'rb')
             start_scan = self.load_metadata (f)
             f.close()
         else:
@@ -51,9 +53,11 @@ class BlockDB:
             self.dump_metadata()
 
     def dump_metadata (self):
+        from __main__ import G
         W ('saving metadata...')
         t0 = timer()
-        fileob = open (METADATA_PATH + '.tmp', 'wb')
+        metadata_path = os.path.join (G.base, self.metadata_path)
+        fileob = open (metadata_path + '.tmp', 'wb')
         cPickle.dump (1, fileob, 2)
         cPickle.dump (len(self.blocks), fileob, 2)
         for a, pos in self.blocks.iteritems():
@@ -63,7 +67,7 @@ class BlockDB:
                 2
             )
         fileob.close()
-        os.rename (METADATA_PATH + '.tmp', METADATA_PATH)
+        os.rename (metadata_path + '.tmp', metadata_path)
         W ('done %.2f secs\n' % (t0.end(),))
 
     def load_metadata (self, fileob):
@@ -90,9 +94,11 @@ class BlockDB:
 
     def scan_block_chain (self, last_pos):
         from caesure.proto import unpack_block_header
-        if not os.path.isfile (BLOCKS_PATH):
-            open (BLOCKS_PATH, 'wb').write('')
-        f = open (BLOCKS_PATH, 'rb')
+        from __main__ import G
+        blocks_path = os.path.join (G.args.base, self.blocks_path)
+        if not os.path.isfile (blocks_path):
+            open (blocks_path, 'wb').write('')
+        f = open (blocks_path, 'rb')
         W ('reading block headers...')
         f.seek (0, 2)
         eof_pos = f.tell()
@@ -126,13 +132,16 @@ class BlockDB:
                 count += 1
         W ('done. scanned %d blocks in %.02f secs\n' % (count, t0.end()))
         f.close()
-        self.read_only_file = open (BLOCKS_PATH, 'rb')
+        blocks_path = os.path.join (G.args.base, self.blocks_path)
+        self.read_only_file = open (blocks_path, 'rb')
         if count > 1000:
             self.dump_metadata()
 
     def open_for_append (self):
+        from __main__ import G
+        blocks_path = os.path.join (G.args.base, self.blocks_path)
         # reopen in append mode
-        self.file = open (BLOCKS_PATH, 'ab')
+        self.file = open (blocks_path, 'ab')
 
     def get_block (self, name):
         pos = self.blocks[name]

@@ -79,7 +79,7 @@ class RecentBlocks:
         
 class LedgerState:
 
-    save_path = '/usr/local/caesure/utxo.bin'
+    save_path = 'utxo.bin'
 
     def __init__ (self, load=False):
         self.outpoints = UTXO_Map()
@@ -116,7 +116,9 @@ class LedgerState:
 
     def save_state (self):
         from coro.asn1.data_file import DataFileWriter
-        f = open (self.save_path + '.tmp', 'wb')
+        from __main__ import G
+        save_path = os.path.join (G.args.base, self.save_path)
+        f = open (save_path + '.tmp', 'wb')
         df = DataFileWriter (f)
         df.write_object ([
             self.cache_version,
@@ -139,8 +141,9 @@ class LedgerState:
 
     def load_state (self, path=None):
         from coro.asn1.data_file import DataFileReader
+        from __main__ import G
         if path is None:
-            path = self.save_path
+            path = os.path.join (G.args.base, self.save_path)
         W ('loading outpoints cache...')
         t0 = timer()
         try:
