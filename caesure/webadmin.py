@@ -420,7 +420,9 @@ class handler:
 
     def cmd_ledger (self, request, PUSH, parts):
         r = self.G.recent_blocks
-        tips = r.tips.items()
+        oldest, tips = r.find_tips()
+        tips.add (oldest)
+        tips = [(lx.height, lx) for lx in tips]
         tips.sort()
         PUSH (H2 ('ledger tips'))
         for height, lx in tips:
