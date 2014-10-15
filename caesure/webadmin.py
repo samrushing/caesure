@@ -404,17 +404,24 @@ class handler:
         return True
 
     def cmd_connect (self, request, PUSH, parts):
-        from __main__ import Connection, get_my_addr
+        from caesure.server import Connection, get_my_addr
         if request.query:
             qparts = parse_qs (request.query[1:])
             if self.match_form (qparts, ['host']):
-                he_addr = (qparts['host'][0], 8333)
+                host = qparts['host'][0]
+                parts = host.split (':')
+                if len(parts) == 2:
+                    port = int (parts[1])
+                else:
+                    port = 8333
+                he_addr = (qparts['host'][0], port)
                 me_addr = get_my_addr (he_addr)
                 bc = Connection (me_addr, he_addr)
+        PUSH (H3 ('[note: IPV4 only as of yet]'))
         PUSH (
             elem0 ('form'),
             'IP Address: ',
-            elemz ('input', type="text", name="host", value="127.0.0.1"),
+            elemz ('input', type="text", name="host", value="127.0.0.1:8333"),
             elemz ('input', type="submit", value="Connect"),
         )
 
