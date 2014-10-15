@@ -27,6 +27,10 @@ cdef struct outpoint:
     uint64_t amt
     string script
 
+
+# you may be tempted to do this, but don't.  it *really* slows things down.
+#@cython.freelist(200)
+
 cdef class outpoint_set:
     cdef vector[outpoint] v
 
