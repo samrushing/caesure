@@ -75,7 +75,7 @@ class BaseConnection:
     # protocol version
     version = 70001
     # software version
-    version_string = '/caesure:20140611/'
+    version_string = '/caesure:20141014/'
     # relay flag (see bip37 for details...)
     relay = False
 
@@ -660,6 +660,7 @@ def new_block_thread():
                         # let the gen_packets loop deal with this.
                         pass
         #G.txmap.feed_block (block, block.get_height())
+        G.recent_blocks.new_block (block)
         W ('[new_block %d]' % (nsent,))
 
 def new_connection_thread():
@@ -739,10 +740,10 @@ def go (args, global_state):
     G = global_state
     G.args = args
     G.addr_cache = AddressCache()
-    G.block_db = block_db.BlockDB (ready_only=False)
+    G.block_db = block_db.BlockDB (read_only=False)
     G.hoover = BlockHoover()
     G.txn_pool = TransactionPool()
-    G.recent_blocks = ledger.catch_up (G.block_db)
+    G.recent_blocks = ledger.catch_up (G)
     G.verbose = args.verbose
     G.connection_map = {}
 
