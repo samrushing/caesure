@@ -84,6 +84,20 @@ def address_to_key (s):
         raise BadAddress (s)
     return v, h160
 
+def compute_rewards (n):
+    l = []
+    r = 50 * 100000000
+    for i in range (n):
+        l.append (r)
+        r /= 2
+    return l
+
+# 60 years' worth
+reward_schedule = compute_rewards (15)
+
+def compute_reward (height):
+    return reward_schedule [height // 210000]
+
 class timer:
 
     def __init__ (self):
