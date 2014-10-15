@@ -5,7 +5,7 @@ import struct
 
 from caesure.script import pprint_script, OPCODES, parse_script
 from caesure.block_db import BlockDB
-from caesure.bitcoin import key_to_address, rhash, bcrepr, ZERO_NAME, Name
+from caesure.bitcoin import *
 from caesure.txfaa import UTXO_Map, UTXO_Scan_Map
 
 import coro
@@ -15,28 +15,6 @@ from pprint import pprint as pp
 import sys
 
 W = sys.stderr.write
-
-def compute_rewards (n):
-    l = []
-    r = 50 * 100000000
-    for i in range (n):
-        l.append (r)
-        r /= 2
-    return l
-
-# 60 years' worth
-reward_schedule = compute_rewards (15)
-
-def compute_reward (height):
-    return reward_schedule [height // 210000]
-
-import time
-
-class timer:
-    def __init__ (self):
-        self.start = time.time()
-    def end (self):
-        return time.time() - self.start
 
 class RecentBlocks:
 
@@ -48,23 +26,25 @@ class RecentBlocks:
         self.horizon = 20
 
     def find_tips (self):
-        # build a graph of backward links, the tips we want are
-        #   not in that graph.  [plus we get the oldest link].
+        "returns <set-of-oldest-blocks>, <set-of-tips>"
         from __main__ import G
         db = G.block_db
-        g0 = set()
+        g0 = set (self.blocks.keys())
+        g1 = set()
+        g2 = set()
+        g3 = set()
         for name, lx in self.blocks.iteritems():
             back = db.prev[lx.block_name]
-            g0.add (back)
-        g1 = set()
-        oldest = None
+            # g1 = nodes pointing out of the set (i.e., oldest/horizon).
+            if back not in g0:
+                g1.add (lx)
+            # g2 = back pointers of all nodes in the set.
+            g2.add (back)
         for name, lx in self.blocks.iteritems():
-            if lx.block_name not in g0:
-                if db.prev.has_key (lx.block_name):
-                    oldest = lx
-                else:
-                    g1.add (lx)
-        return oldest, g1
+            if name not in g2:
+                # nodes who are not pointed to by the set (i.e., tips)
+                g3.add (lx)
+        return g1, g3
 
     def remove_old_blocks (self):
         # first, find the highest block.
@@ -80,13 +60,19 @@ class RecentBlocks:
                     del self.blocks[lx.block_name]
 
     def new_block (self, block, verify=False):
+        from __main__ import G
         tip = None
         for name, lx in self.blocks.iteritems():
             if block.prev_block == lx.block_name:
                 tip = lx
                 break
         if tip is None:
-            raise ValueError ("new block does not chain %064x" % (block.name,))
+            if G.block_db.has_key (block.prev_block):
+                self.new_block (G.block_db[block.prev_block])
+                self.new_block (block)
+            else:
+                # XXX should be unreachable?
+                raise ValueError ("new block does not chain %064x" % (block.name,))
         else:
             self.blocks[block.name] = tip.extend (block, tip.height + 1, verify)
             self.remove_old_blocks()
@@ -281,7 +267,7 @@ def catch_up (G):
     coro.set_latency_warning (0)
     for name in most_names:
         if i == ledger.height + 1:
-            if i % 100 == 0:
+            if i % 1000 == 0:
                 W('%d ' % (i,))
             block = db[name]
             ledger.feed_block (block, i)
