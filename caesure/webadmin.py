@@ -421,9 +421,11 @@ class handler:
     def cmd_ledger (self, request, PUSH, parts):
         r = self.G.recent_blocks
         oldest, tips = r.find_tips()
-        tips.add (oldest)
+        # include the oldest node for now...
+        tips = tips.union (oldest)
         tips = [(lx.height, lx) for lx in tips]
         tips.sort()
+        tips.reverse()
         PUSH (H2 ('ledger tips'))
         for height, lx in tips:
             PUSH (
@@ -436,6 +438,7 @@ class handler:
                     ('|utxo|', len(lx.outpoints)),
                 ])
             )
+            PUSH (elemz ('br'))
 
     def cmd_shutdown (self, request, PUSH, parts):
         request.push (H3 ('Shutting down...'))
