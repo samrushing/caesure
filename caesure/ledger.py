@@ -22,6 +22,9 @@ class RecentBlocks:
         self.db = db
         # we always begin with one tip.
         self.blocks = {ledger.block_name : ledger}
+        # these will be recomputed upon the call to self.new_block()
+        self.oldest = ledger
+        self.leaves = set([ledger])
         # we keep a horizon of this many blocks back from the tip.
         self.horizon = 20
 
@@ -44,6 +47,7 @@ class RecentBlocks:
             if name not in g2:
                 # nodes who are not pointed to by the set (i.e., tips)
                 g3.add (lx)
+        self.root, self.leaves = g1, g3
         return g1, g3
 
     def remove_old_blocks (self):
@@ -76,7 +80,15 @@ class RecentBlocks:
         else:
             self.blocks[block.name] = tip.extend (block, tip.height + 1, verify)
             self.remove_old_blocks()
+            self.find_tips()
         
+    def save_ledger_thread (self):
+        while 1:
+            # roughly once an hour, flush the oldest recent block's ledger.
+            coro.sleep_relative (67 * 60)
+            oldest = list(self.oldest)[0]
+            oldest.save_state()
+
 class LedgerState:
 
     save_path = 'utxo.bin'
@@ -120,6 +132,7 @@ class LedgerState:
         save_path = os.path.join (G.args.base, self.save_path)
         f = open (save_path + '.tmp', 'wb')
         df = DataFileWriter (f)
+        t0 = timer()
         df.write_object ([
             self.cache_version,
             self.height,
@@ -137,7 +150,7 @@ class LedgerState:
                 coro.yield_slice()
         f.close()
         os.rename (self.save_path + '.tmp', self.save_path)
-        W ('[saved outpoints %d/%d entries]' % (len(self.outpoints), n))
+        W ('[saved outpoints %d/%d entries %.02fs]' % (len(self.outpoints), n, t0.end()))
 
     def load_state (self, path=None):
         from coro.asn1.data_file import DataFileReader
@@ -208,6 +221,7 @@ class LedgerState:
                 #W ('.')
                 if verify:
                     tx.verify0 (j, oscript)
+                # XXX if it fails to verify, put it back!
                 input_sum += amt
             output_sum = self.store_outputs (tx)
             fees += input_sum - output_sum
@@ -218,7 +232,6 @@ class LedgerState:
             lost = (reward1 + fees) - reward0
             #W ('reward mismatch height=%d lost=%s\n' % (height, lost))
             self.lost += lost
-        self.block = b
         self.height = height
         self.block_name = b.name
 

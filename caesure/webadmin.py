@@ -428,24 +428,28 @@ class handler:
     def cmd_ledger (self, request, PUSH, parts):
         r = self.G.recent_blocks
         oldest, tips = r.find_tips()
-        # include the oldest node for now...
-        tips = tips.union (oldest)
+        oldest = oldest.pop()
         tips = [(lx.height, lx) for lx in tips]
         tips.sort()
         tips.reverse()
         PUSH (H2 ('ledger tips'))
+
+        def ledger_table (lx):
+            return autotable ([
+                ('height', lx.height),
+                ('name', hex(lx.block_name)),
+                ('total', bcrepr (lx.total + lx.lost)),
+                ('live', bcrepr (lx.total)),
+                ('lost', bcrepr (lx.lost)),
+                ('fees', bcrepr (lx.fees)),
+                ('|utxo|', len(lx.outpoints)),
+            ])
+
         for height, lx in tips:
-            PUSH (
-                autotable ([
-                    ('height', lx.height),
-                    ('total', bcrepr (lx.total + lx.lost)),
-                    ('live', bcrepr (lx.total)),
-                    ('lost', bcrepr (lx.lost)),
-                    ('fees', bcrepr (lx.fees)),
-                    ('|utxo|', len(lx.outpoints)),
-                ])
-            )
+            PUSH (ledger_table (lx))
             PUSH (elemz ('br'))
+        PUSH (H2 ('trailing ledger (at horizon)'))
+        PUSH (ledger_table (oldest))
 
     def cmd_shutdown (self, request, PUSH, parts):
         request.push (H3 ('Shutting down...'))
