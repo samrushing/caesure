@@ -791,3 +791,4 @@ def go (args, global_state):
     coro.spawn (G.addr_cache.purge_thread)
     coro.spawn (new_block_thread)
     coro.spawn (new_connection_thread)
+    coro.spawn (G.recent_blocks.save_ledger_thread)
