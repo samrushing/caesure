@@ -384,6 +384,7 @@ class Connection (BaseConnection):
             W ('bad command: "%r", ignoring\n' % (cmd,))
 
     def cmd_version (self, data):
+        # XXX sanity check this data
         self.other_version = caesure.proto.unpack_version (data)
         self.send_packet ('verack', '')
         G.hoover.notify_height (self, self.other_version.start_height)
