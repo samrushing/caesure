@@ -23,7 +23,7 @@ class RecentBlocks:
         # we always begin with one tip.
         self.blocks = {ledger.block_name : ledger}
         # these will be recomputed upon the call to self.new_block()
-        self.oldest = ledger
+        self.root = set([ledger])
         self.leaves = set([ledger])
         # we keep a horizon of this many blocks back from the tip.
         self.horizon = 20
@@ -86,8 +86,8 @@ class RecentBlocks:
         while 1:
             # roughly once an hour, flush the oldest recent block's ledger.
             coro.sleep_relative (67 * 60)
-            oldest = list(self.oldest)[0]
-            oldest.save_state()
+            root = list(self.root)[0]
+            root.save_state()
 
 class LedgerState:
 
@@ -101,7 +101,9 @@ class LedgerState:
         self.lost = 0
         self.fees = 0
         if load:
-            self.load_state (self.save_path)
+            from __main__ import G
+            save_path = os.path.join (G.args.base, self.save_path)
+            self.load_state (save_path)
 
     def clone (self):
         ob = LedgerState()
@@ -149,7 +151,7 @@ class LedgerState:
             if n % 1000 == 999:
                 coro.yield_slice()
         f.close()
-        os.rename (self.save_path + '.tmp', self.save_path)
+        os.rename (save_path + '.tmp', save_path)
         W ('[saved outpoints %d/%d entries %.02fs]' % (len(self.outpoints), n, t0.end()))
 
     def load_state (self, path=None):
@@ -263,7 +265,7 @@ def catch_up (G):
     ledger = LedgerState (load=True)
 
     if len(ledger.outpoints) == 0:
-        W ('no outpoints cache.  performing fast scan [15+ minutes]\n')
+        W ('no outpoints cache.  performing fast scan [15-40 minutes]\n')
         ledger.outpoints = UTXO_Scan_Map()
         fast_scan = True
     else:
@@ -330,10 +332,13 @@ def catch_up (G):
 
 
 if __name__ == '__main__':
+    import argparse
     class GlobalState:
         pass
     G = GlobalState()
-    import bitcoin
+    p = argparse.ArgumentParser()
+    p.add_argument ('-b', '--base', help='data directory', default='/usr/local/caesure', metavar='PATH')
+    G.args = p.parse_args()
     G.block_db = BlockDB (read_only=True)
     if '-c' not in sys.argv:
         import coro
