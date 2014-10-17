@@ -4,7 +4,6 @@ from distutils.core import setup
 from distutils.extension import Extension
 from Cython.Distutils import build_ext
 
-
 exts = [
     Extension ('caesure.proto', ['caesure/proto.pyx']),
     Extension ('caesure._script', ['caesure/_script.pyx']),
@@ -12,7 +11,11 @@ exts = [
 ]
 
 import os
+
 if os.path.isfile ('/usr/local/lib/libsecp256k1.a'):
+    if os.uname()[0] == 'Darwin':
+        # needed for -rpath to work.
+        os.environ['MACOSX_DEPLOYMENT_TARGET'] = '10.9'
     exts.append (
         Extension (
             "caesure.secp256k1",
@@ -47,4 +50,5 @@ setup (
     install_requires = ['cython>=0.20.2'],
     license          = 'Simplified BSD',
     cmdclass = {'build_ext': build_ext},
+    scripts = ['scripts/caesure'],
 )

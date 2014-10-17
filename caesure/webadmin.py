@@ -9,7 +9,7 @@ import coro
 from urllib import splitquery
 from urlparse import parse_qs
 from cgi import escape
-from caesure._script import parse_script
+from caesure._script import parse_script, ScriptError
 from caesure.script import pprint_script, OPCODES
 from caesure.proto import hexify, Name, name_from_hex
 from caesure.bitcoin import *
@@ -178,9 +178,12 @@ def describe_iscript (p):
     elif p[0] == (0, '') and all ([x[0] == 0 for x in p[1:]]):
         # p2sh redeem
         sigs = p[1:-1]
-        redeem = parse_script (p[-1][1])
-        _, val = is_multi_tx (redeem)
-        return 'p2sh (%d sigs):%s' % (len(sigs), val)
+        try:
+            redeem = parse_script (p[-1][1])
+            _, val = is_multi_tx (redeem)
+            return 'p2sh (%d sigs):%s' % (len(sigs), val)
+        except ScriptError:
+            return 'bad p2sh'
     elif len(p) == 1 and p[0][0] == 0:
         return 'sig'
     else:
