@@ -5,6 +5,8 @@ import struct
 from pprint import pprint as pp
 import sys
 
+from caesure._script import *
+
 W = sys.stderr.write
 
 # confusion: I believe 'standard' transactions != 'valid scripts', I think They
@@ -223,23 +225,6 @@ def make_push_int (n):
     else:
         return make_push_str (render_int (n))
 
-class ScriptError (Exception):
-    pass
-class ScriptFailure (ScriptError):
-    pass
-class BadScript (ScriptError):
-    pass
-class ScriptUnderflow (ScriptError):
-    pass
-class StackUnderflow (ScriptError):
-    pass
-class AltStackUnderflow (ScriptError):
-    pass
-class DisabledError (ScriptError):
-    pass
-class BadNumber (ScriptError):
-    pass
-
 class script_parser:
     def __init__ (self, script):
         self.s = script
@@ -314,38 +299,6 @@ class script_parser:
                     code.append ((KIND_OP, insn))
             last_insn = insn
         return code, None
-
-def unparse_script (p):
-    r = []
-    for insn in p:
-        kind = insn[0]
-        if kind == KIND_PUSH:
-            _, data = insn
-            r.append (make_push_str (data))
-        elif kind == KIND_COND:
-            _, sense, sub0, sub1 = insn
-            if sense:
-                op = OP_IF
-            else:
-                op = OP_NOTIF
-            r.append (chr (op))
-            r.append (unparse_script (sub0))
-            if sub1:
-                r.append (chr (OP_ELSE))
-                r.append (unparse_script (sub1))
-            r.append (chr (OP_ENDIF))
-        elif kind == KIND_CHECK:
-            _, op, _ = insn
-            r.append (chr (op))
-        elif kind == KIND_OP:
-            _, op = insn
-            r.append (chr (op))
-    return ''.join (r)
-
-KIND_PUSH  = 0
-KIND_COND  = 1
-KIND_OP    = 2
-KIND_CHECK = 3
 
 def pprint_script (p):
     r = []
@@ -519,13 +472,6 @@ def remove_sigs (p, sigs):
         else:
             r.append (insn)
     return r
-
-def parse_script (s):
-    code, end = script_parser(s).parse()
-    assert (end is None)
-    return code
-
-from caesure._script import parse_script, unparse_script
 
 def do_equal (m):
     m.need(2)
