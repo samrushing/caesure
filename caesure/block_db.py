@@ -31,7 +31,7 @@ class BlockDB:
         self.last_block = 0
         self.new_block_cv = coro.condition_variable()
         self.file = None
-        metadata_path = os.path.join (G.base, self.metadata_path)
+        metadata_path = os.path.join (G.args.base, self.metadata_path)
         if os.path.isfile (metadata_path):
             f = open (metadata_path, 'rb')
             start_scan = self.load_metadata (f)
@@ -56,7 +56,7 @@ class BlockDB:
         from __main__ import G
         W ('saving metadata...')
         t0 = timer()
-        metadata_path = os.path.join (G.base, self.metadata_path)
+        metadata_path = os.path.join (G.args.base, self.metadata_path)
         fileob = open (metadata_path + '.tmp', 'wb')
         cPickle.dump (1, fileob, 2)
         cPickle.dump (len(self.blocks), fileob, 2)
