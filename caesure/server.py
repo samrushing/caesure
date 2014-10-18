@@ -15,10 +15,9 @@ from caesure import block_db
 from caesure import ledger
 from caesure import proto
 from caesure import script
-
 from caesure.bitcoin import *
-
 from caesure.ansi import *
+from caesure.asn1_log import ASN1_Logger
 
 ticks_to_sec = coro.tsc_time.ticks_to_sec
 
@@ -87,7 +86,6 @@ class BaseConnection:
         self.other_version = None
         self.send_mutex = coro.mutex()
         if conn is None:
-            W ('other_addr=%r\n' % (other_addr,))
             if ':' in other_addr[0]:
                 self.conn = coro.tcp6_sock()
             else:
@@ -98,6 +96,7 @@ class BaseConnection:
         self.stream = coro.read_stream.sock_stream (self.conn)
 
     def connect (self):
+        G.log ('connect', self.other_addr)
         self.conn.connect (self.other_addr)
 
     def send_packet (self, command, payload):
@@ -113,12 +112,13 @@ class BaseConnection:
                 struct.pack ('<II', len(payload), checksum),
                 payload
             ])
+            if G.args.packet:
+                G.log ('send_packet', self.other_addr, command, payload)
             if G.verbose and command not in ('ping', 'pong'):
                 WT (' ' + command)
 
     def get_our_block_height (self):
         return G.block_db.last_block
-
 
     def send_version (self):
         v = caesure.proto.VERSION()
@@ -140,7 +140,7 @@ class BaseConnection:
         while 1:
             data = self.stream.read_exact (24)
             if not data:
-                #W ('connection closed.\n')
+                G.log ('closed', self.other_addr)
                 break
             magic, command, length, checksum = struct.unpack ('<I12sII', data)
             command = command.strip ('\x00')
@@ -153,6 +153,8 @@ class BaseConnection:
                 payload = self.stream.read_exact (length)
             else:
                 payload = ''
+            if G.args.packet:
+                G.log ('recv_packet', command, payload)
             G.hoover.live_cv.wake_one (self)
             yield (command, payload)
 
@@ -177,7 +179,7 @@ class BaseConnection:
             if b.name == name:
                 return b
             else:
-                W ('\n[get_block: wrong block? %r != %r]' % (b.name, name))
+                G.log ('get_block', 'wrong', str(b.name), str(name))
         raise ValueError
 
     def get_tx (self, name, timeout=5):
@@ -206,10 +208,6 @@ class BlockHoover:
         self.target = 0
         self.running = False
         self.live_cv = coro.condition_variable()
-        self.debug = open ('/tmp/hoover.log', 'wb')
-
-    def log (self, msg):
-        self.debug.write ('%s %s\n' % (time.ctime(), msg))
 
     def get_live_connection (self):
         return self.live_cv.wait()
@@ -232,32 +230,24 @@ class BlockHoover:
             self.qset.add (block_db.genesis_block_hash)
         try:
             self.running = True
-            c = self.get_live_connection()
-            W ('[getheaders start]')
-            t0 = block_db.timer()
-            names = c.getheaders()
-            W ('[getheaders stop %.2f]' % (t0.end(),))
+            while 1:
+                c = self.get_live_connection()
+                G.log ('getheaders', 'start')
+                t0 = block_db.timer()
+                names = c.getheaders()
+                G.log ('getheaders', 'stop', '%.02f' % t0.end())
+                if names:
+                    break
+                else:
+                    coro.sleep_relative (5)
             for name in names:
                 self.queue.push (name)
                 self.qset.add (name)
             # if relay=False and |connections|=1, this way we get at least one live packet.
             c.ping()
             while len(self.queue):
-                if len(self.ready) > 100:
-                    names = db.num_block[db.last_block]
-                    W ('stalled: names=%r\n' % (names,))
-                    self.debug.flush()
-                    coro.sleep_relative (1000)
-                    stalled = list(names)[0]
-                    # where is this in the queue?
-                    for j, x in enumerate (self.queue):
-                        if x == stalled:
-                            W ('found in position %d\n' % (j,))
-                            break
-                    if x != stalled:
-                        W ('not found in queue\n')
                 name = self.queue.pop()
-                self.log ('%r popped' % (name,))
+                G.log ('hoover', 'popped', str(name))
                 self.qset.remove (name)
                 c = self.get_live_connection()
                 coro.spawn (self.get_block, c, name)
@@ -267,18 +257,18 @@ class BlockHoover:
     def get_block (self, conn, name):
         try:
             self.requested.add (name)
-            self.log ('%r asked' % (name,))
+            strname = str(name)
+            G.log ('hoover', 'asked', strname)
             self.add_block (conn.get_block (name))
-            self.log ('%r received' % (name,))
+            G.log ('hoover', 'recv', strname)
         except (coro.TimeoutError, ValueError):
             # let some other connection try it...
-            W ('[retry %r]' % (name,))
-            self.log ('%r retried' % (name,))
+            G.log ('hoover', 'retry', strname)
             self.queue.push_front (name)
             self.qset.add (name)
             self.requested.remove (name)
         except:
-            WY ('\n[get_block: %r]' % (coro.compact_traceback(),))
+            G.log ('hoover', 'error', coro.compact_traceback())
 
     def add_block (self, b):
         self.ready[b.prev_block] = b
@@ -301,7 +291,7 @@ class BlockHoover:
         try:
             b.check_rules()
         except BadState as reason:
-            W ('*** bad block: %s %r' % (name, reason))
+            G.log ('block_to_db', 'bad block', str(name), reason)
         else:
             G.block_db.add (name, b)
 
@@ -326,11 +316,10 @@ class Connection (BaseConnection):
     def go (self):
         try:
             if G.connection_map.has_key (self.other_addr):
-                W ('duplicate? %r\n' % (self.other_addr,))
                 return
             else:
                 G.connection_map[self.other_addr] = self
-            W ('starting %s connection us: %r them: %r\n' % (self.direction, self.my_addr, self.other_addr))
+            G.log ('connect', self.direction, self.my_addr, self.other_addr)
             try:
                 if self.direction == 'outgoing':
                     coro.with_timeout (30, self.connect)
@@ -340,13 +329,11 @@ class Connection (BaseConnection):
                     self.last_packet = coro.now
             except OSError:
                 # XXX collect data on errnos
-                #W ('OSError: %r\n' % (sys.exc_info()[:2],))
-                pass
+                G.log ('connection', 'oserror', self.other_addr)
             except coro.TimeoutError:
-                #W ('TimeoutError: %r\n' % (sys.exc_info()[:2],))
-                pass
+                G.log ('connection', 'timeout', self.other_addr)
         finally:
-            W ('stopping %s connection us: %r them: %r\n' % (self.direction, self.my_addr, self.other_addr))
+            G.log ('stopped', self.direction, self.my_addr, self.other_addr)
             del G.connection_map[self.other_addr]
             if self.direction == 'incoming':
                 G.in_conn_sem.release (1)
@@ -373,18 +360,18 @@ class Connection (BaseConnection):
             try:
                 method = getattr (self, 'cmd_%s' % cmd,)
             except AttributeError:
-                W ('no support for "%s" command\n' % (cmd,))
+                G.log ('connection', 'unknown_command', cmd)
             else:
                 try:
                     method (data)
                 except:
-                    W ('caesure error: %r\n' % (coro.compact_traceback(),))
-                    W ('     ********** problem processing %r command\n' % (cmd,))
+                    G.log ('connection', 'error', cmd, coro.compact_traceback())
         else:
-            W ('bad command: "%r", ignoring\n' % (cmd,))
+            G.log ('connection', 'bad_command', cmd)
 
     def cmd_version (self, data):
         # XXX sanity check this data
+        G.log ('version', data)
         self.other_version = caesure.proto.unpack_version (data)
         self.send_packet ('verack', '')
         G.hoover.notify_height (self, self.other_version.start_height)
@@ -481,7 +468,7 @@ class Connection (BaseConnection):
     def cmd_alert (self, data):
         payload, signature = caesure.proto.unpack_alert (data)
         # XXX verify signature
-        W ('alert: sig=%r payload=%r\n' % (signature, payload,))
+        G.log ('alert', signature, payload)
 
     def cmd_headers (self, data):
         pass
@@ -492,7 +479,6 @@ class Connection (BaseConnection):
             if pair not in self.known:
                 pairs0.append (pair)
         if len(pairs0):
-            #W ('{pairs0 = %r}' % (pairs0,))
             self.send_packet ('inv', caesure.proto.pack_inv (pairs0))
             self.known.update (pairs0)
 
@@ -524,8 +510,8 @@ class Connection (BaseConnection):
                     if block.prev_block == chain[-1]:
                         chain.append (block.name)
                     else:
-                        W ('unexpected fork in getheaders from %r\n' % (self,))
-                        raise ValueError
+                        G.log ('getheaders', 'nochain')
+                        return []
                 hashes[0] = chain[-1]
         # we already have chain[0]
         return chain[1:]
@@ -554,7 +540,7 @@ class AddressCache:
         save_path = os.path.join (G.args.base, self.save_path)
         try:
             self.cache = pickle.load (open (save_path, 'rb'))
-            W ('loaded %d addresses\n' % (len(self.cache),))
+            G.log ('address-cache', 'load', len(self.cache))
         except IOError:
             self.seed()
 
@@ -577,7 +563,7 @@ class AddressCache:
 
     def seed (self):
         # called only when we don't have a cached peer set.
-        W ('seeding via dns...\n')
+        G.log ('dns', 'seeding...')
         timestamp = coro.tsc_time.now_raw_posix_sec()
         r = coro.get_resolver()
         addrs = set()
@@ -619,12 +605,12 @@ class TransactionPool:
                     i += 1
                 self.pool[tx.name] = tx
             except script.ScriptFailure:
-                W ('[tx %064x script failed]' % (tx.name,))
+                G.log ('pool', 'script failure', str(tx.name))
             except KeyError:
-                #W ('[tx %064x missing inputs]' % (tx.name,))
+                G.log ('pool', 'missing inputs', str(tx.name))
                 self.missing[tx.name] = tx
         else:
-            W ('[tx %064x already]' % (tx.name,))
+            G.log ('pool', 'already', str(tx.name))
 
     def new_block_thread (self):
         while 1:
@@ -637,19 +623,9 @@ class TransactionPool:
                     in_pool += 1
                 except KeyError:
                     pass
-            W (ansi ('[pool: removed %d of %d]' % (in_pool, total), 35))
+            G.log ('pool', 'removed', in_pool, total)
 
 # --------------------------------------------------------------------------------
-
-def status_thread():
-    while 1:
-        coro.sleep_relative (10)
-        coro.write_stderr (
-            '[clients:%d addr_cache:%d]\n' % (
-                len(G.connection_map),
-                len(G.addr_cache.cache),
-            )
-        )
 
 def new_block_thread():
     while 1:
@@ -665,9 +641,8 @@ def new_block_thread():
                     except OSError:
                         # let the gen_packets loop deal with this.
                         pass
-        #G.txmap.feed_block (block, block.get_height())
         G.recent_blocks.new_block (block)
-        W ('[new_block %d]' % (nsent,))
+        G.log ('block', str(block.name))
 
 def new_connection_thread():
     # give the servers time to start up and set addresses
@@ -718,6 +693,7 @@ def serve (addr):
     s.bind (addr0)
     s.listen (100)
     W ('starting server on %r\n' % (addr0,))
+    G.log ('server', 'start', addr0)
     while 1:
         conn, addr1 = s.accept()
         G.in_conn_sem.acquire (1)
@@ -745,6 +721,10 @@ def go (args, global_state):
     global G
     G = global_state
     G.args = args
+    G.logger = ASN1_Logger (
+        open (os.path.join (G.args.base, 'log.asn1'), 'ab', 0)
+        )
+    G.log = G.logger.log
     G.addr_cache = AddressCache()
     G.block_db = block_db.BlockDB (read_only=False)
     G.hoover = BlockHoover()
@@ -752,7 +732,6 @@ def go (args, global_state):
     G.recent_blocks = ledger.catch_up (G)
     G.verbose = args.verbose
     G.connection_map = {}
-
     # needed for the sub-imports below...
     import coro
     # install a real resolver
@@ -793,7 +772,6 @@ def go (args, global_state):
     if args.connect:
         for addr in args.connect:
             coro.spawn (connect, addr)
-    #coro.spawn (status_thread)
     coro.spawn (G.addr_cache.purge_thread)
     coro.spawn (new_block_thread)
     coro.spawn (new_connection_thread)

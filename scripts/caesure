@@ -21,6 +21,7 @@ p.add_argument ('-r', '--relay', action='store_true', help='[hack] set relay=Tru
 p.add_argument ('-u', '--user', action='append', help='webui user (will listen on INADDR_ANY)', metavar='USER:PASS')
 p.add_argument ('-v', '--verbose', action='store_true', help='show verbose packet flow')
 p.add_argument ('-b', '--base', help='data directory', default='/usr/local/caesure', metavar='PATH')
+p.add_argument (      '--packet', action='store_true', help='log all packets', default=False)
 args = p.parse_args()
 coro.spawn (caesure.server.go, args, G)
 coro.event_loop()
