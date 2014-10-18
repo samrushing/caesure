@@ -1,6 +1,7 @@
 # -*- Mode: Python; indent-tabs-mode: nil -*-
 
 from coro.asn1.python import encode
+import coro
 import struct
 
 class ASN1_Logger:
