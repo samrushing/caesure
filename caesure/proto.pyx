@@ -557,13 +557,23 @@ def unpack_addr (bytes data):
     cdef uint64_t count = p.unpack_var_int()
     cdef list result = []
     cdef int i
-    cdef uint32_t timestamp
     for i in range (count):
         result.append ((p.u32(), p.unpack_net_addr()))
     return result
         
 def unpack_getdata (bytes data):
     return unpack_inv (data)
+
+def unpack_getblocks (bytes data):
+    cdef pkt p = pkt (data)
+    cdef uint32_t version = p.u32()
+    cdef uint64_t count = p.unpack_var_int()
+    cdef list result = []
+    for i in range (count):
+        result.append (p.unpack_name())
+    # hash_stop
+    result.append (p.unpack_name())
+    return version, result
 
 def unpack_alert (bytes data):
     cdef pkt p = pkt (data)
