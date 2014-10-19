@@ -1,0 +1,27 @@
+#!/usr/bin/env python
+# -*- Mode: Python; indent-tabs-mode: nil -*-
+
+import argparse
+import caesure.server
+import coro
+
+class GlobalState:
+    pass
+
+G = GlobalState()
+
+p = argparse.ArgumentParser()
+p.add_argument ('-o', '--outgoing', type=int, help="total number of outgoing connections", default=10)
+p.add_argument ('-i', '--incoming', type=int, help="total number of incoming connections", default=10)
+p.add_argument ('-s', '--serve', action="append", help="serve on this address", metavar='IP:PORT')
+p.add_argument ('-c', '--connect', action="append", help="connect to this address", metavar='IP:PORT')
+p.add_argument ('-m', '--monitor', action='store_true', help='run the monitor on /tmp/caesure.bd')
+p.add_argument ('-a', '--webui', action='store_true', help='run the web interface at http://localhost:8380/admin/')
+p.add_argument ('-r', '--relay', action='store_true', help='[hack] set relay=True', default=False)
+p.add_argument ('-u', '--user', action='append', help='webui user (will listen on INADDR_ANY)', metavar='USER:PASS')
+p.add_argument ('-v', '--verbose', action='store_true', help='show verbose packet flow')
+p.add_argument ('-b', '--base', help='data directory', default='/usr/local/caesure', metavar='PATH')
+p.add_argument (      '--packet', action='store_true', help='log all packets', default=False)
+args = p.parse_args()
+coro.spawn (caesure.server.go, args, G)
+coro.event_loop()

@@ -1,0 +1,35 @@
+-*- Mode: rst -*-
+
+TODO
+----
+
+* getblocks, getheaders.
+* hardening.
+* bootstrap.dat (choose one of the three options)
+* investigate using our own copy of ripemd160 (using the one in 'hashlib' is a back-door openssl dep.)
+* sanity check hashes of known blocks
+* match compiler
+
+ledger
+======
+
+Our plan is to use a persistent data structure (a functional AA tree) to implement a 'multiple universes' approach to the
+blockchain: within an area at the front of the chain, each block/fork will have its own version of the ledger, each with a separate
+history.  Each fork will update independently.  When a dead fork has fallen far enough behind, its ledger data is abandoned.
+
+The persistent data structure is rather expensive compared to an stl map, so the latter is used only for an initial scan.  We'll
+probably distribute utxo cache files (currently ~600MB) via bittorrent or other means.
+
+memory requirements: characterize.
+
+
+in progress
+-----------
+* ledger: [optional, for full forwarding node] live pruning ledger in memory.
+  mostly done, just need to implement the RecentBlocks/frontier, pool/pools, etc.
+
+done
+----
+* getdata/blocks: before txns, let's forward blocks.
+* proper package installation and directory for blocks.bin etc...
+* use html_help module.
