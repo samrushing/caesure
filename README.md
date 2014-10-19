@@ -9,7 +9,6 @@ name
 ----
 
 It's a pun on the words Caesar and Seizure.  "Render unto Caesar..."
-[I realize now that the pun doesn't work in Latin, where Caesar is pronounced 'Kaiser'.  Sorry.]
 
 requirements
 ------------
