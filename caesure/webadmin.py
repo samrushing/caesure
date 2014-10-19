@@ -241,6 +241,7 @@ class handler:
         PUSH (
             space2 + A ('reload', href="/admin/reload"),
             space2 + A ('status', href="/admin/status"),
+            space2 + A ('connections', href="/admin/connections"),            
             space2 + A ('blocks', href="/admin/block"),
             space2 + A ('pool', href="/admin/pool"),
             space2 + A ('ledger', href="/admin/ledger"),
@@ -249,12 +250,49 @@ class handler:
         )
 
     def cmd_status (self, request, PUSH, parts):
-        db = self.G.block_db
+        r = self.G.recent_blocks
+        oldest, tips = r.find_tips()
+        oldest = oldest.pop()
+        tips = [(lx.height, lx) for lx in tips]
+        tips.sort()
+        tips.reverse()
+        PUSH (H2 ('status'))
+        if self.G.hoover.running:
+            PUSH (H3 ('synchronizing block chain'))
+            bh = self.G.hoover
+            PUSH (autotable ([
+                ('in_flight.avail', bh.in_flight_sem.avail),
+                ('|ready|', len(bh.ready)),
+                ('target', bh.target),
+                ('|queue|', len(bh.queue)),
+                ])
+            )
+        else:
+            PUSH (H3 ('synchronized'))
+        PUSH (H2 ('block tips'))
+        for height, lx in tips:
+            b = self.G.block_db[lx.block_name]
+            PUSH (autotable ([
+                ('height', height),
+                ('version', b.version),
+                ('name', '%064x' % (b.name,)),
+                ('prev', '%064x' % (b.prev_block,)),
+                ('merk', '%064x' % (b.merkle_root,)),
+                ('time', '%s (%s)' % (b.timestamp, time.ctime (b.timestamp))),
+                ('bits', b.bits),
+                ('nonce', b.nonce),
+                ('txns', len(b.transactions)),
+            ]))
+        PUSH (H2 ('connections'))
+        PUSH (autotable ([
+            ('in_conn_sem.avail', G.in_conn_sem.avail),
+            ('out_conn_sem.avail', G.out_conn_sem.avail),
+            ('|connections|', len(G.connection_map)),
+            ])
+        )
+
+    def cmd_connections (self, request, PUSH, parts):
         PUSH (
-            H3 ('last block'),
-            'name[s]: %s' % (escape (', '.join ([repr(x) for x in db.num_block[db.last_block]]))),
-            elem0 ('br'),
-            'num: %d' % (db.last_block,),
             H3 ('connections'),
             elem0 ('table'),
             thead ('#', 'packets', 'address', 'port', 'height', 'version', 'services', 'direction'),
