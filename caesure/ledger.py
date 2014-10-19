@@ -27,6 +27,7 @@ class RecentBlocks:
         self.leaves = set([ledger])
         # we keep a horizon of this many blocks back from the tip.
         self.horizon = 20
+        self.highest = 0
 
     def find_tips (self):
         "returns <set-of-oldest-blocks>, <set-of-tips>"
@@ -57,10 +58,10 @@ class RecentBlocks:
         if not blocks:
             return
         else:
-            highest = blocks[-1][0]
+            self.highest = blocks[-1][0]
             # now, forget any blocks beyond the horizon
             for h, lx in blocks:
-                if highest - h > self.horizon:
+                if self.highest - h > self.horizon:
                     del self.blocks[lx.block_name]
 
     def new_block (self, block, verify=False):
@@ -71,12 +72,18 @@ class RecentBlocks:
                 tip = lx
                 break
         if tip is None:
-            if G.block_db.has_key (block.prev_block):
-                self.new_block (G.block_db[block.prev_block])
-                self.new_block (block)
+            # XXX I think we are getting duplicate blocks fed here,
+            #     because they are (almost) always behind the horizon.
+            height = block.get_height()
+            if self.highest - 20 <= height <= self.highest:
+                # does this fall within our range?
+                if G.block_db.has_key (block.prev_block):
+                    self.new_block (G.block_db[block.prev_block], verify)
+                    self.new_block (block, verify)
+                else:
+                    G.log ('recent', 'nochain', height, block.name, block.prev_block)
             else:
-                # XXX should be unreachable?
-                raise ValueError ("new block does not chain %064x" % (block.name,))
+                G.log ('recent', 'out of range', height, block.name, block.prev_block)
         else:
             self.blocks[block.name] = tip.extend (block, tip.height + 1, verify)
             self.remove_old_blocks()
@@ -228,6 +235,8 @@ class LedgerState:
             output_sum = self.store_outputs (tx)
             fees += input_sum - output_sum
             self.total -= input_sum
+            if i % 50 == 0:
+                coro.yield_slice()
         self.fees += fees
         reward1 = compute_reward (height)
         if reward1 + fees != reward0:
