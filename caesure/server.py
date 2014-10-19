@@ -168,30 +168,6 @@ class BaseConnection:
         # note: pack_getdata == pack_inv
         self.send_packet ('getdata', caesure.proto.pack_inv (items))
 
-    def get_block (self, name, timeout=5):
-        "request a particular block.  return it, or raise TimeoutError"
-        self.getdata ([(block_db.OBJ_BLOCK, name)])
-        for i in range (5):
-            _, data = coro.with_timeout (timeout, self.wait_for, 'block')
-            b = block_db.BLOCK()
-            b.unpack (data)
-            G.hoover.log ('%r got' % (b.name,))
-            if b.name == name:
-                return b
-            else:
-                G.log ('get_block', 'wrong', str(b.name), str(name))
-        raise ValueError
-
-    def get_tx (self, name, timeout=5):
-        "request a particular tx.  return it, or raise TimeoutError"
-        self.getdata ([(block_db.OBJ_TX, name)])
-        for i in range (5):
-            _, data = coro.with_timeout (timeout, self.wait_for, 'tx')
-            tx = block_db.TX()
-            tx.unpack (data)
-            if tx.name == name:
-                return b
-
 class BadState (Exception):
     pass
 
@@ -199,15 +175,15 @@ class BlockHoover:
 
     # this class is responsible for downloading the block chain.
 
-    def __init__ (self):
+    def __init__ (self, in_flight=20):
         self.queue = coro.fifo()
         self.qset = set()
-        self.qheight = 0
         self.requested = set()
         self.ready = {}
-        self.target = 0
+        self.target = G.block_db.last_block
         self.running = False
         self.live_cv = coro.condition_variable()
+        self.in_flight_sem = coro.semaphore (in_flight)
 
     def get_live_connection (self):
         return self.live_cv.wait()
@@ -230,6 +206,7 @@ class BlockHoover:
             self.qset.add (block_db.genesis_block_hash)
         try:
             self.running = True
+            # get the list of all blocks we need to fetch...
             while 1:
                 c = self.get_live_connection()
                 G.log ('getheaders', 'start')
@@ -240,28 +217,37 @@ class BlockHoover:
                     break
                 else:
                     coro.sleep_relative (5)
+            # start fetching them...
+            coro.spawn (self.drain_queue_thread)
             for name in names:
+                self.in_flight_sem.acquire(1)
                 self.queue.push (name)
                 self.qset.add (name)
-            # if relay=False and |connections|=1, this way we get at least one live packet.
-            c.ping()
-            while len(self.queue):
-                name = self.queue.pop()
+            self.queue.push (None)
+        finally:
+            self.running = False
+
+    def drain_queue_thread (self):
+        while 1:
+            name = self.queue.pop()
+            if name is None:
+                break
+            else:
                 G.log ('hoover', 'popped', str(name))
                 self.qset.remove (name)
                 c = self.get_live_connection()
                 coro.spawn (self.get_block, c, name)
-        finally:
-            self.running = False
 
     def get_block (self, conn, name):
         try:
             self.requested.add (name)
             strname = str(name)
+            t0 = coro.now_usec
             G.log ('hoover', 'asked', strname)
             self.add_block (conn.get_block (name))
             G.log ('hoover', 'recv', strname)
-        except (coro.TimeoutError, ValueError):
+            self.in_flight_sem.release(1)
+        except coro.TimeoutError:
             # let some other connection try it...
             G.log ('hoover', 'retry', strname)
             self.queue.push_front (name)
@@ -286,6 +272,7 @@ class BlockHoover:
                     break
             else:
                 break
+            coro.yield_slice()
 
     def block_to_db (self, name, b):
         try:
@@ -294,6 +281,7 @@ class BlockHoover:
             G.log ('block_to_db', 'bad block', str(name), reason)
         else:
             G.block_db.add (name, b)
+            G.recent_blocks.new_block (b)
 
 class Connection (BaseConnection):
 
@@ -346,16 +334,30 @@ class Connection (BaseConnection):
                 return False
         return True
 
-    def wait_for (self, cmd):
-        if not self.waiting.has_key (cmd):
-            self.waiting[cmd] = coro.condition_variable()
-        return self.waiting[cmd].wait()
+    def wait_for (self, key):
+        "wait on a CV with <key> (used by get_block, etc...)"
+        if not self.waiting.has_key (key):
+            self.waiting[key] = coro.condition_variable()
+        try:
+            return self.waiting[key].wait()
+        finally:
+            del self.waiting[key]
+
+    def get_block (self, name, timeout=10):
+        "request a particular block.  return it, or raise TimeoutError"
+        key = (OBJ_BLOCK, name)
+        self.getdata ([key])
+        return coro.with_timeout (timeout, self.wait_for, key)
+
+    def get_tx (self, name, timeout=10):
+        "request a particular tx.  return it, or raise TimeoutError"
+        key = (OBJ_BLOCK, name)
+        self.getdata ([key])
+        return coro.with_timeout (timeout, self.wait_for, key)
 
     def do_command (self, cmd, data):
         if self.waiting.has_key (cmd):
-            cv = self.waiting[cmd]
-            del self.waiting[cmd]
-            cv.wake_all ((cmd, data))
+            self.waiting[cmd].wake_all ((cmd, data))
         if self.check_command_name (cmd):
             try:
                 method = getattr (self, 'cmd_%s' % cmd,)
@@ -390,19 +392,37 @@ class Connection (BaseConnection):
         if not G.hoover.running:
             to_fetch = []
             for kind, name in pairs:
-                if kind == block_db.OBJ_BLOCK:
+                if kind == OBJ_BLOCK:
                     if name not in G.block_db:
                         to_fetch.append ((kind, name))
-                elif kind == block_db.OBJ_TX:
+                elif kind == OBJ_TX:
                     if name not in G.txn_pool:
                         to_fetch.append ((kind, name))
             if to_fetch:
                 self.getdata (to_fetch)
 
+    def cmd_getblocks (self, data):
+        version, names = caesure.proto.unpack_getblocks (data)
+        hash_stop = names[-1]
+        db = G.block_db
+        for name in names:
+            if db.has_key (name):
+                break
+        invs = []
+        for i in range (500):
+            name = db.prev[name]
+            invs.append ((OBJ_BLOCK, name))
+            if name == hash_stop:
+                break
+        if len(invs):
+            invs.reverse()
+            G.log ('getblocks-reply', invs)
+            self.send_invs (invs)
+
     def cmd_getdata (self, data):
         blocks = []
         for kind, name in caesure.proto.unpack_getdata (data):
-            if kind == block_db.OBJ_BLOCK and name in G.block_db:
+            if kind == OBJ_BLOCK and name in G.block_db:
                 blocks.append (name)
         coro.spawn (self.send_blocks, blocks)
         
@@ -431,23 +451,32 @@ class Connection (BaseConnection):
         payload = caesure.proto.pack_addr (r)
         self.send_packet ('addr', payload)
 
+    def maybe_wake (self, key, ob):
+        probe = self.waiting.get (key, None)
+        if probe is not None:
+            probe.wake_all (ob)
+
     def cmd_tx (self, data):
         tx = block_db.TX()
         tx.unpack (data)
+        self.maybe_wake ((OBJ_TX, tx.name))
         G.txn_pool.add (tx)
 
     def cmd_block (self, data):
+        b = block_db.BLOCK()
+        b.unpack (data)
+        self.maybe_wake ((OBJ_BLOCK, b.name), b)
         if not G.hoover.running:
             # normal operation, feed new blocks in
-            b = block_db.BLOCK()
-            b.unpack (data)
             b.check_rules()
+            # XXX once we have txn verification slotted in, sketch out
+            #     exact rules for notifying, writing to disk, etc...
             G.block_db.add (b.name, b)
             # this happens when our last block has been orphaned
             #  by a block that shows up *later* - we need to manually
             #  request the missing link[s].
             if b.prev_block not in G.block_db.blocks:
-                self.getdata ([(block_db.OBJ_BLOCK, b.prev_block)])
+                self.getdata ([(OBJ_BLOCK, b.prev_block)])
 
     def cmd_notfound (self, data):
         # XXX need to use this in hoover.wait_for!
@@ -503,6 +532,7 @@ class Connection (BaseConnection):
             self.send_packet ('getheaders', caesure.proto.pack_getblocks (self.version, hashes))
             _, data = coro.with_timeout (30, self.wait_for, 'headers')
             blocks = caesure.proto.unpack_headers (data)
+            # XXX do some rule checks here to avoid miscreants.
             if len(blocks) == 0:
                 break
             else:
@@ -578,10 +608,10 @@ class AddressCache:
 
 # --------------------------------------------------------------------------------
 
-# XXX important - handle txns coming in later that spend outputs that
-#   txns in our pool have spent [i.e., double-spends], especially in the
-#   case where they are accepted into blocks, we need to know to throw them
-#   away.
+# XXX This is just a placeholder for now.  I'm fairly certain that we'll need
+#   a different pool for each ledger tip, and we'll probably need to have a
+#   modified version of that block's outpoints as well.  This class [or a version
+#   will probably move to the ledger module].
 
 class TransactionPool:
 
@@ -636,7 +666,7 @@ def new_block_thread():
             for c in G.connection_map.values():
                 if c.packet_count:
                     try:
-                        c.send_invs ([(block_db.OBJ_BLOCK, name)])
+                        c.send_invs ([(OBJ_BLOCK, name)])
                         nsent += 1
                     except OSError:
                         # let the gen_packets loop deal with this.
@@ -722,9 +752,10 @@ def go (args, global_state):
     G = global_state
     G.args = args
     G.logger = ASN1_Logger (
-        open (os.path.join (G.args.base, 'log.asn1'), 'ab', 0)
+        open (os.path.join (G.args.base, 'log.asn1'), 'ab')
         )
     G.log = G.logger.log
+    G.log ('starting caesure')
     G.addr_cache = AddressCache()
     G.block_db = block_db.BlockDB (read_only=False)
     G.hoover = BlockHoover()
