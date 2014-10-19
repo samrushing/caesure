@@ -9,6 +9,12 @@ from caesure._script import *
 
 W = sys.stderr.write
 
+# for some reason cpdef in _script does not work for these.
+KIND_PUSH  = 0
+KIND_COND  = 1
+KIND_OP    = 2
+KIND_CHECK = 3
+
 # confusion: I believe 'standard' transactions != 'valid scripts', I think They
 #  have chosen a subset of legal transactions that are considered 'standard'.
 
