@@ -21,3 +21,4 @@ class ASN1_Logger:
                 data
                 )
             )
+        self.file.flush()
