@@ -1,7 +1,9 @@
 # -*- Mode: Python -*-
 
+import argparse
 import struct
 import sys
+import time
 from coro.asn1.python import decode
 
 class Sync:
@@ -37,12 +39,19 @@ class Sync:
 def frob(ob):
     if type(ob) is bytes:
         if len(ob) > 500:
-            return '<large>'
+            if args.big:
+                return ob.encode ('hex')
+            else:
+                return '<large>'
         elif len(ob) == 32:
             return ob[::-1].encode ('hex')
         return ob
     else:
         return ob
+
+p = argparse.ArgumentParser()
+p.add_argument ('-b', '--big', action='store_true', help="show large strings", default=False)
+args = p.parse_args()
 
 s = Sync()
 s.resync (sys.stdin)
@@ -51,8 +60,9 @@ while 1:
     size, = struct.unpack ('>I', sys.stdin.read (4))
     block = sys.stdin.read (size)
     (timestamp, info), size = decode (block)
+    timestamp /= 1000000.0
     info = [frob(x) for x in info]
-    print timestamp, info
+    print time.ctime (timestamp), info
     magic = sys.stdin.read (4)
     if not magic:
         break
