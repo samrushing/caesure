@@ -113,7 +113,7 @@ class BaseConnection:
                 payload
             ])
             if G.args.packet:
-                G.log ('send_packet', self.other_addr, command, payload)
+                G.log ('send', self.other_addr, command, payload)
             if G.verbose and command not in ('ping', 'pong'):
                 WT (' ' + command)
 
@@ -154,7 +154,7 @@ class BaseConnection:
             else:
                 payload = ''
             if G.args.packet:
-                G.log ('recv_packet', command, payload)
+                G.log ('recv', self.other_addr, command, payload)
             G.hoover.live_cv.wake_one (self)
             yield (command, payload)
 
@@ -405,19 +405,22 @@ class Connection (BaseConnection):
         version, names = caesure.proto.unpack_getblocks (data)
         hash_stop = names[-1]
         db = G.block_db
+        found = None
         for name in names:
             if db.has_key (name):
+                found = name
                 break
-        invs = []
-        for i in range (500):
-            name = db.prev[name]
-            invs.append ((OBJ_BLOCK, name))
-            if name == hash_stop:
-                break
-        if len(invs):
-            invs.reverse()
-            G.log ('getblocks-reply', invs)
-            self.send_invs (invs)
+        if found:
+            name = found
+            invs = []
+            for i in range (500):
+                name = db.prev[name]
+                invs.append ((OBJ_BLOCK, name))
+                if name == hash_stop:
+                    break
+            if len(invs):
+                invs.reverse()
+                self.send_invs (invs)
 
     def cmd_getdata (self, data):
         blocks = []
