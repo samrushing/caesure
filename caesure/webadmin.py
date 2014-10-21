@@ -295,10 +295,12 @@ class handler:
         PUSH (
             H3 ('connections'),
             elem0 ('table'),
-            thead ('#', 'packets', 'address', 'port', 'height', 'version', 'services', 'direction'),
+            thead ('#', 'packets', 'address', 'port', 'height', 'services', 'direction', 'version'),
         )
         i = 1
-        for addr, conn in self.G.connection_map.iteritems():
+        items = self.G.connection_map.items()
+        items.sort (lambda (ak,av),(bk,bv): cmp (av.direction, bv.direction))
+        for addr, conn in items:
             ip, port = conn.other_addr
             if conn.other_version is not None:
                 v = conn.other_version.sub_version_num
@@ -308,7 +310,7 @@ class handler:
                 v = 'N/A'
                 h = 0
                 s = 0
-            PUSH (trow (i, conn.packet_count, ip, port, h, v, s, conn.direction))
+            PUSH (trow (i, conn.packet_count, ip, port, h, s, conn.direction, v))
             i += 1
         PUSH (elem1 ('table'))
 
