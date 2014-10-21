@@ -462,7 +462,7 @@ class Connection (BaseConnection):
     def cmd_tx (self, data):
         tx = block_db.TX()
         tx.unpack (data)
-        self.maybe_wake ((OBJ_TX, tx.name))
+        self.maybe_wake ((OBJ_TX, tx.name), tx)
         G.txn_pool.add (tx)
 
     def cmd_block (self, data):
