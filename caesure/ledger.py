@@ -81,9 +81,9 @@ class RecentBlocks:
                     self.new_block (G.block_db[block.prev_block], verify)
                     self.new_block (block, verify)
                 else:
-                    G.log ('recent', 'nochain', height, block.name, block.prev_block)
+                    G.log ('recent', 'nochain', height, str(block.name), block.prev_block)
             else:
-                G.log ('recent', 'out of range', height, block.name, block.prev_block)
+                G.log ('recent', 'out of range', height, str(block.name), block.prev_block)
         else:
             self.blocks[block.name] = tip.extend (block, tip.height + 1, verify)
             self.remove_old_blocks()
