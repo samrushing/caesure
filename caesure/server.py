@@ -664,8 +664,10 @@ def new_block_thread():
     while 1:
         block = G.block_db.new_block_cv.wait()
         name = block.name
-        nsent = 0
+        G.log ('block', str(block.name))
+        G.recent_blocks.new_block (block)
         if not G.hoover.running:
+            nsent = 0
             for c in G.connection_map.values():
                 if c.packet_count:
                     try:
@@ -674,8 +676,6 @@ def new_block_thread():
                     except OSError:
                         # let the gen_packets loop deal with this.
                         pass
-        G.recent_blocks.new_block (block)
-        G.log ('block', str(block.name))
 
 def new_connection_thread():
     # give the servers time to start up and set addresses
@@ -750,6 +750,10 @@ def connect (addr):
     addr0 = get_my_addr (addr1)
     Connection (addr0, addr1)
 
+def exception_notifier():
+    me = coro.current()
+    G.log ('exception', me.id, me.name, coro.compact_traceback())
+
 def go (args, global_state):
     global G
     G = global_state
@@ -758,6 +762,9 @@ def go (args, global_state):
         open (os.path.join (G.args.base, 'log.asn1'), 'ab')
         )
     G.log = G.logger.log
+    # needed for the sub-imports below...
+    import coro
+    coro.set_exception_notifier (exception_notifier)
     G.log ('starting caesure')
     G.addr_cache = AddressCache()
     G.block_db = block_db.BlockDB (read_only=False)
@@ -766,8 +773,6 @@ def go (args, global_state):
     G.recent_blocks = ledger.catch_up (G)
     G.verbose = args.verbose
     G.connection_map = {}
-    # needed for the sub-imports below...
-    import coro
     # install a real resolver
     coro.dns.cache.install()
     if args.monitor:
