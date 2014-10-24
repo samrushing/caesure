@@ -241,3 +241,14 @@ class BlockDB:
             if i >= 10:
                 step *= 2
         return result
+
+
+if __name__ == '__main__':
+    import argparse
+    class GlobalState:
+        pass
+    G = GlobalState()
+    p = argparse.ArgumentParser()
+    p.add_argument ('-b', '--base', help='data directory', default='/usr/local/caesure', metavar='PATH')
+    G.args = p.parse_args()
+    db = G.block_db = BlockDB (read_only=True)
