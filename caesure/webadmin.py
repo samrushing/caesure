@@ -251,11 +251,10 @@ class handler:
 
     def cmd_status (self, request, PUSH, parts):
         r = self.G.recent_blocks
-        oldest, tips = r.find_tips()
-        oldest = oldest.pop()
-        tips = [(lx.height, lx) for lx in tips]
-        tips.sort()
-        tips.reverse()
+        oldest = r.root
+        leaves = [(lx.height, lx) for lx in r.leaves]
+        leaves.sort()
+        leaves.reverse()
         PUSH (H2 ('status'))
         if self.G.hoover.running:
             PUSH (H3 ('synchronizing block chain'))
@@ -269,8 +268,8 @@ class handler:
             )
         else:
             PUSH (H3 ('synchronized'))
-        PUSH (H2 ('block tips'))
-        for height, lx in tips:
+        PUSH (H2 ('block leaves'))
+        for height, lx in leaves:
             b = self.G.block_db[lx.block_name]
             PUSH (autotable ([
                 ('height', height),
@@ -470,12 +469,12 @@ class handler:
 
     def cmd_ledger (self, request, PUSH, parts):
         r = self.G.recent_blocks
-        oldest, tips = r.find_tips()
-        oldest = oldest.pop()
-        tips = [(lx.height, lx) for lx in tips]
-        tips.sort()
-        tips.reverse()
-        PUSH (H2 ('ledger tips'))
+        oldest = r.root
+        leaves = r.leaves
+        leaves = [(lx.height, lx) for lx in leaves]
+        leaves.sort()
+        leaves.reverse()
+        PUSH (H2 ('ledger leaves'))
 
         def ledger_table (lx):
             return autotable ([
@@ -488,11 +487,23 @@ class handler:
                 ('|utxo|', len(lx.outpoints)),
             ])
 
-        for height, lx in tips:
+        for height, lx in leaves:
             PUSH (ledger_table (lx))
             PUSH (elemz ('br'))
         PUSH (H2 ('trailing ledger (at horizon)'))
         PUSH (ledger_table (oldest))
+        db = G.block_db
+        values = r.blocks.values()
+        values.sort (lambda a,b: cmp (b.height, a.height))
+        PUSH (H2 ('RecentBlocks.blocks'))
+        PUSH (elem0 ('table', style="width:auto"))
+        PUSH (thead ('height', 'name', 'prev'))
+        r = []
+        for lx in values:
+            row = [lx.height, hex(lx.block_name), hex(db.prev[lx.block_name])]
+            r.append (wrapn ('tr', [wrap ('td', x) for x in row]))
+        PUSH (''.join (r))
+        PUSH (elem1 ('table'))
 
     def cmd_shutdown (self, request, PUSH, parts):
         request.push (H3 ('Shutting down...'))
