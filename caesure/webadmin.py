@@ -322,7 +322,7 @@ class handler:
                 ('prev', '%064x' % (b.prev_block,)),
                 ('merk', '%064x' % (b.merkle_root,)),
                 ('time', '%s (%s)' % (b.timestamp, time.ctime (b.timestamp))),
-                ('bits', b.bits),
+                ('bits', '%08x' % (b.bits,)),
                 ('nonce', b.nonce),
                 ('txns', len(b.transactions)),
             ]),
