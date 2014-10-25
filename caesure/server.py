@@ -193,7 +193,7 @@ class BlockHoover:
             # XXX sanity check height by calculating a likely neighborhood given the date.
             behind = height - self.target
             self.target = height
-            if behind > 10 and not self.running:
+            if not self.running:
                 # start hoovering
                 coro.spawn (self.go)
 
@@ -208,7 +208,10 @@ class BlockHoover:
             self.running = True
             # get the list of all blocks we need to fetch...
             while 1:
-                c = self.get_live_connection()
+                while 1:
+                    c = self.get_live_connection()
+                    if c.other_version.start_height > self.target:
+                        break
                 G.log ('getheaders', 'start')
                 t0 = block_db.timer()
                 names = c.getheaders()
@@ -296,6 +299,7 @@ class Connection (BaseConnection):
             self.direction = 'outgoing'
         self.waiting = {}
         self.known = set()
+        self.kick_download = None
         coro.spawn (self.go)
 
     def get_our_block_height (self):
@@ -401,8 +405,33 @@ class Connection (BaseConnection):
             if to_fetch:
                 self.getdata (to_fetch)
 
+    def get_next_500 (self, start_name, stop):
+        db = G.block_db
+        height = db.block_num[start_name]
+        height = min (db.last_block, height + 500)
+        W ('walking backward from height %d\n' % (height,))
+        # find a non-contested starting point
+        while 1:
+            names = db.num_block[height]
+            if len(names) == 1:
+                break
+            else:
+                height -= 1
+        # from there, walk the main chain backward
+        name = list(names)[0]
+        #W ('walking backward from %r\n' % (name,))
+        r = []
+        while name != start_name and name != stop:
+            r.append ((OBJ_BLOCK, name))
+            name = db.prev[name]
+        # put the names in forward order...
+        r.reverse()
+        #W ('done: %d names\n' % (len(r),))
+        return r
+
     def cmd_getblocks (self, data):
         version, names = caesure.proto.unpack_getblocks (data)
+        #W ('\ncmd_getblocks: names=%r\n' % (names,))
         hash_stop = names[-1]
         db = G.block_db
         found = None
@@ -410,17 +439,13 @@ class Connection (BaseConnection):
             if db.has_key (name):
                 found = name
                 break
+        #W ('found=%r\n' % (found,))
         if found:
             name = found
-            invs = []
-            for i in range (500):
-                name = db.prev[name]
-                invs.append ((OBJ_BLOCK, name))
-                if name == hash_stop:
-                    break
-            if len(invs):
-                invs.reverse()
-                self.send_invs (invs)
+            invs = self.get_next_500 (name, hash_stop)
+            #W ('len(invs)=%d\n' % (len(invs),))
+            self.send_invs (invs)
+            self.kick_download = invs[-1][1]
 
     def cmd_getdata (self, data):
         blocks = []
@@ -434,6 +459,19 @@ class Connection (BaseConnection):
             self.send_packet (
                 'block', G.block_db.get_block (name)
             )
+            if name == self.kick_download:
+                # this is a horrible hack to smack old bitcoin core into continuing
+                #   a blockchain download.
+                self.kick_download = None
+                db = G.block_db
+                last_name = list(db.num_block[db.last_block])[0]
+                key = (OBJ_BLOCK, last_name)
+                try:
+                    self.known.remove (key)
+                except KeyError:
+                    pass
+                self.send_invs ([key])
+                W ('sent kick for %r\n' % (last_name,))
 
     def cmd_getaddr (self, data):
         # XXX we should have a thread do this once a minute or so, precomputed.
@@ -468,7 +506,9 @@ class Connection (BaseConnection):
     def cmd_block (self, data):
         b = block_db.BLOCK()
         b.unpack (data)
-        self.maybe_wake ((OBJ_BLOCK, b.name), b)
+        key = (OBJ_BLOCK, b.name)
+        self.known.add (key)
+        self.maybe_wake (key, b)
         if not G.hoover.running:
             # normal operation, feed new blocks in
             b.check_rules()
@@ -577,6 +617,9 @@ class AddressCache:
         except IOError:
             self.seed()
 
+    def __len__ (self):
+        return len(self.cache)
+
     def random (self):
         return random.choice (self.cache.keys())
 
@@ -681,22 +724,26 @@ def new_connection_thread():
     # give the servers time to start up and set addresses
     coro.sleep_relative (2)
     while 1:
-        G.out_conn_sem.acquire (1)
         addr1 = new_random_addr()
-        addr0 = get_my_addr (addr1)
-        Connection (addr0, addr1)
+        if addr1 is not None:
+            G.out_conn_sem.acquire (1)
+            addr0 = get_my_addr (addr1)
+            Connection (addr0, addr1)
         # avoid hammering the internets
         coro.sleep_relative (1)
 
 def new_random_addr():
-    for i in range (100):
-        (ip, port) = G.addr_cache.random()
-        if (ip, port) not in G.connection_map:
-            if ip == '192.33.90.253':
-                # filter out eth switzerland (they comprise 25% of all addrs).
-                pass
-            else:
-                return (ip, port)
+    if len(G.addr_cache):
+        for i in range (100):
+            (ip, port) = G.addr_cache.random()
+            if (ip, port) not in G.connection_map:
+                if ip == '192.33.90.253':
+                    # filter out eth switzerland (they comprise 25% of all addrs).
+                    pass
+                else:
+                    return (ip, port)
+    else:
+        return None
 
 ipv4_server_addrs = []
 ipv6_server_addrs = []
@@ -752,7 +799,9 @@ def connect (addr):
 
 def exception_notifier():
     me = coro.current()
-    G.log ('exception', me.id, me.name, coro.compact_traceback())
+    traceback = coro.compact_traceback()
+    G.log ('exception', me.id, me.name, traceback)
+    WY ('exception: %r %r %r\n' % (me.id, me.name, traceback))
 
 def go (args, global_state):
     global G
