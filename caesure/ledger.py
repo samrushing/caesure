@@ -29,41 +29,6 @@ class RecentBlocks:
         self.horizon = 20
         self.highest = 0
 
-    def find_tips (self):
-        "returns <set-of-oldest-blocks>, <set-of-tips>"
-        from __main__ import G
-        db = G.block_db
-        g0 = set (self.blocks.keys())
-        g1 = set()
-        g2 = set()
-        g3 = set()
-        for name, lx in self.blocks.iteritems():
-            back = db.prev[lx.block_name]
-            # g1 = nodes pointing out of the set (i.e., oldest/horizon).
-            if back not in g0:
-                g1.add (lx)
-            # g2 = back pointers of all nodes in the set.
-            g2.add (back)
-        for name, lx in self.blocks.iteritems():
-            if name not in g2:
-                # nodes who are not pointed to by the set (i.e., tips)
-                g3.add (lx)
-        self.root, self.leaves = g1, g3
-        return g1, g3
-
-    def remove_old_blocks (self):
-        # first, find the highest block.
-        blocks = [(lx.height, lx) for lx in self.blocks.values()]
-        blocks.sort()
-        if not blocks:
-            return
-        else:
-            self.highest = blocks[-1][0]
-            # now, forget any blocks beyond the horizon
-            for h, lx in blocks:
-                if self.highest - h > self.horizon:
-                    del self.blocks[lx.block_name]
-
     def new_block (self, block, verify=False):
         from __main__ import G
         tip = None
@@ -72,29 +37,96 @@ class RecentBlocks:
                 tip = lx
                 break
         if tip is None:
-            # XXX I think we are getting duplicate blocks fed here,
-            #     because they are (almost) always behind the horizon.
             height = block.get_height()
-            if self.highest - 20 <= height <= self.highest:
-                # does this fall within our range?
-                if G.block_db.has_key (block.prev_block):
-                    self.new_block (G.block_db[block.prev_block], verify)
-                    self.new_block (block, verify)
-                else:
-                    G.log ('recent', 'nochain', height, str(block.name), block.prev_block)
+            if height > self.highest:
+                # I think this happens when the hoover delivers blocks out of order.
+                # we know the previous block is in the database...
+                self.new_block (G.block_db[block.prev_block], verify)
+                self.new_block (block, verify)
+            elif height < self.highest - self.horizon:
+                G.log ('recent', 'stale', height, str(block.name), str(block.prev_block))
             else:
-                G.log ('recent', 'out of range', height, str(block.name), block.prev_block)
+                G.log ('recent', 'nochain', height, str(block.name), str(block.prev_block))
+                import pdb; pdb.set_trace()
         else:
             self.blocks[block.name] = tip.extend (block, tip.height + 1, verify)
-            self.remove_old_blocks()
-            self.find_tips()
+            if len(self.blocks) > 2:
+                # otherwise we are in 'catch up' mode.
+                self.trim()
         
+    def find_lowest_common_ancestor (self, leaves, db):
+        # find the lowest common ancestor of <leaves>.
+        # http://en.wikipedia.org/wiki/Lowest_common_ancestor
+        # aka MRCA 'most recent common ancestor'.
+        search = leaves[:]
+        while 1:
+            if len(search) == 1:
+                # we're done.
+                break
+            else:
+                # find the highest leaf.
+                search.sort()
+                # scoot it back by one level.
+                h, name = search[-1]
+                scoot = (h-1, db.prev[name])
+                if scoot in search:
+                    # we found a common ancestor
+                    del search[-1]
+                else:
+                    search[-1] = scoot
+        return search[0][1]
+
+    def trim (self):
+        # this is more complex than I would like, but it solves a difficult problem:
+        #  we need to trim the set of recent blocks back to our horizon, *except* in
+        #  the case where the most recent common ancestor is *outside* the horizon.
+        from __main__ import G
+        db = G.block_db
+        # get them sorted by height
+        blocks = [(lx.height, lx) for lx in self.blocks.values()]
+        blocks.sort()
+        self.highest = blocks[-1][0]
+        # --- identify leaves within our horizon ---
+        # note: we can't use db.next[name] to identify leaves because
+        # the db is often past our ledger on startup, and leaves in
+        # self.blocks can have children in the db.
+        cutoff = self.highest - self.horizon
+        names = set (self.blocks.keys())
+        prevs = set ([db.prev[lx.block_name] for lx in self.blocks.values()])
+        leaves = names.difference (prevs)
+        leaves = [self.blocks[name] for name in leaves]
+        # only those leaves within our horizon...
+        leaves = [(lx.height, lx.block_name) for lx in leaves if lx.height >= cutoff]
+        leaves.sort()
+        lca = self.find_lowest_common_ancestor (leaves, db)
+        lca = self.blocks[lca]
+        if lca.height < cutoff:
+            # if the lca is behind the horizon, we must keep it.
+            cutoff = lca.height
+            self.root = lca
+            G.log ('lca cutoff', str(lca.block_name))
+        else:
+            # lca is inside the horizon: crawl back til we hit the cutoff.
+            root = lca
+            while root.height > cutoff:
+                prev = db.prev[root.block_name]
+                if self.blocks.has_key (prev):
+                    root = self.blocks[prev]
+                else:
+                    # we are building the ledger and don't have horizon nodes yet.
+                    break
+            self.root = root
+        # perform the trim, identify root and leaves.
+        for h, lx in blocks:
+            if h < cutoff:
+                del self.blocks[lx.block_name]
+        self.leaves = set (self.blocks[x[1]] for x in leaves)
+
     def save_ledger_thread (self):
         while 1:
             # roughly once an hour, flush the oldest recent block's ledger.
             coro.sleep_relative (67 * 60)
-            root = list(self.root)[0]
-            root.save_state()
+            self.root.save_state()
 
 class LedgerState:
 
