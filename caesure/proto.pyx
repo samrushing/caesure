@@ -462,7 +462,6 @@ cdef class TX:
 
 cdef class BLOCK:
     cdef public uint32_t version
-    # XXX consider putting these here as char x[32]
     cdef public Name prev_block
     cdef public Name merkle_root
     cdef public uint32_t timestamp
