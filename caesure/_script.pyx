@@ -124,10 +124,11 @@ class DisabledError (ScriptError):
 class BadNumber (ScriptError):
     pass
 
-cdef KIND_PUSH  = 0
-cdef KIND_COND  = 1
-cdef KIND_OP    = 2
-cdef KIND_CHECK = 3
+cdef enum OP_KIND:
+    KIND_PUSH = 0,
+    KIND_COND = 1,
+    KIND_OP = 2,
+    KIND_CHECK = 3,
 
 cdef uint8_t disabled[255]
 disabled_set = {
@@ -229,6 +230,17 @@ cdef class script_parser:
                 else:
                     code.append ((KIND_OP, insn))
         return code
+
+# XXX this is a temporary measure until I get the time to write a full matching engine.
+def is_p2sh (list s):
+    return (
+        len(s) == 3
+        and s[0] == (KIND_OP, OP_HASH160)
+        and s[2] == (KIND_OP, OP_EQUAL)
+        and len(s[1]) == 2
+        and s[1][0] == KIND_PUSH
+        and len(s[1][1]) == 20
+        )
 
 def parse_script (s):
     cdef uint8_t end = 0

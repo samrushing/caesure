@@ -7,6 +7,16 @@ import sys
 
 from caesure._script import *
 
+sha256 = hashlib.sha256
+
+def dhash (s):
+    return sha256(sha256(s).digest()).digest()
+
+def rhash (s):
+    h1 = hashlib.new ('ripemd160')
+    h1.update (sha256(s).digest())
+    return h1.digest()
+
 W = sys.stderr.write
 
 # for some reason cpdef in _script does not work for these.
@@ -336,6 +346,7 @@ def pprint_script (p):
 def remove_codeseps (p):
     r = []
     for insn in p:
+        # XXX it's unlikely that OP_CODESEPARATOR is a string?
         if insn[0] == KIND_OP and insn[1] == 'OP_CODESEPARATOR':
             pass
         elif insn[0] == KIND_COND:
@@ -409,8 +420,8 @@ class machine:
             raise AltStackUnderflow
 
     def dump (self):
-        W ('  alt=%r\n' % self.altstack,)
-        W ('stack=%r\n' % self.stack,)
+        W ('  alt=%r\n' % [x.encode('hex') for x in self.altstack],)
+        W ('stack=%r\n' % [x.encode('hex') for x in self.stack],)
 
     def truth (self):
         return is_true (self.pop())
@@ -419,9 +430,8 @@ class machine:
 
 class verifying_machine (machine):
 
-    def __init__ (self, prev_outscript, tx, index):
+    def __init__ (self, tx, index):
         machine.__init__ (self)
-        self.prev_outscript = prev_outscript
         self.tx = tx
         self.index = index
 
@@ -440,10 +450,9 @@ class verifying_machine (machine):
             W ('hash_type=%d\n' % (hash_type,))
             raise NotImplementedError
         to_hash = self.tx.get_ecdsa_hash (self.index, s, hash_type)
+        #W ('to_hash = %s\n' % (to_hash.encode ("hex")))
         return self.tx.verify1 (pub, sig, to_hash)
 
-    # having trouble understanding if there is a difference between: CHECKMULTISIG and P2SH.
-    # https://en.bitcoin.it/wiki/BIP_0016
     def check_multi_sig (self, s):
         npub = self.pop_int()
         #print 'npub=', npub
@@ -452,6 +461,10 @@ class verifying_machine (machine):
         #print 'nsig=', nsig
         sigs = [self.pop() for x in range (nsig)]
 
+        pubs = pubs[::-1]
+        sigs = sigs[::-1]
+
+        # XXX test for re-use of sig
         s0 = parse_script (s)
         s1 = remove_codeseps (s0)
         s2 = remove_sigs (s1, sigs)  # rare?
@@ -459,11 +472,13 @@ class verifying_machine (machine):
 
         for sig in sigs:
             nmatch = 0
+            matched = False
             #print 'checking sig...'
             for pub in pubs:
                 if self.check_one_sig (pub, sig, s3):
-                    nmatch += 1
-            if nmatch == 0:
+                    matched = True
+                    break
+            if not matched:
                 #print 'sig matched no pubs'
                 return 0
         return 1
@@ -819,10 +834,11 @@ for name in g.keys():
         code = opcode_map_fwd[opname]
         op_funs[code] = g[name]
 
-from hashlib import sha256
-
-def dhash (s):
-    return sha256(sha256(s).digest()).digest()
+def get_op_fun (opcode):
+    try:
+        return op_funs[opcode]
+    except KeyError:
+        raise ScriptFailure
 
 def pinsn (insn):
     kind = insn[0]
@@ -840,7 +856,34 @@ def pinsn (insn):
         op = insn[1]
         print '%s' % (opcode_map_rev.get (op, str(op)))
 
-def eval_script (m, s):
+def eval_script (m, lock_script, unlock_script):
+    # special treatment here, the top item on the stack is a *script*,
+    #   which must match the hash in <s>.  We then evaluate that script.
+    #   there are additional requirements on the unlock script that will
+    #   need to be checked...
+    lock_script = parse_script (lock_script)
+    unlock_script = parse_script (unlock_script)
+    #W ('lock_script = %r\n' % (lock_script))
+    #W ('unlock_script = %r\n' % (unlock_script))
+    if is_p2sh (lock_script):
+        if unlock_script[-1][0] != KIND_PUSH:
+            #W ('p2sh: last item not a push\n')
+            raise ScriptFailure
+        elif rhash (unlock_script[-1][1]) != lock_script[1][1]:
+            #W ('rhash failed\n')
+            raise ScriptFailure
+        else:
+            p2sh_script = parse_script (unlock_script[-1][1])
+            #W ('p2sh_script=%s\n' % (pprint_script (p2sh_script),))
+            unlock_script = unlock_script[:-1] + p2sh_script
+            #W ('unlock_script=%s\n' % (pprint_script (unlock_script),))
+            return _eval_script (m, unlock_script)
+    else:
+        _eval_script (m, unlock_script)
+        m.clear_alt()
+        return _eval_script (m, lock_script)
+
+def _eval_script (m, s):
     for insn in s:
         #print '---------------'
         #m.dump()
@@ -851,14 +894,14 @@ def eval_script (m, s):
             m.push (data)
         elif kind == KIND_OP:
             _, op = insn
-            op_funs[op](m)
+            get_op_fun(op)(m)
         elif kind == KIND_COND:
             _, sense, tcode, fcode = insn
             truth = m.truth()
             if (sense and truth) or (not sense and not truth):
-                eval_script (m, tcode)
+                _eval_script (m, tcode)
             elif fcode is not None:
-                eval_script (m, fcode)
+                _eval_script (m, fcode)
         elif kind == KIND_CHECK:
             _, op, s0 = insn
             if op in (OP_CHECKSIG, OP_CHECKSIGVERIFY):

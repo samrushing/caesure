@@ -163,15 +163,10 @@ class TX (caesure.proto.TX):
             tx0.inputs[i] = outpoint, script, sequence
         return tx0.render() + struct.pack ('<I', hash_type)
 
-    def verify0 (self, index, prev_outscript):
-        outpoint, script, sequence = self.inputs[index]
-        m = verifying_machine (prev_outscript, self, index)
-        #print 'source script', pprint_script (parse_script (script))
-        eval_script (m, parse_script (script))
-        m.clear_alt()
-        # should terminate with OP_CHECKSIG or its like
-        #print 'redeem script', pprint_script (parse_script (prev_outscript))
-        r = eval_script (m, parse_script (prev_outscript))
+    def verify0 (self, index, lock_script):
+        outpoint, unlock_script, sequence = self.inputs[index]
+        m = verifying_machine (self, index)
+        r = eval_script (m, lock_script, unlock_script)
         if r is None:
             # if the script did not end in a CHECKSIG op, we need
             #   to check the top of the stack (essentially, OP_VERIFY)
