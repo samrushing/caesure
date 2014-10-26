@@ -195,38 +195,32 @@ class BlockHoover:
             self.target = height
             if not self.running:
                 # start hoovering
-                coro.spawn (self.go)
+                coro.spawn (self.go, conn)
 
-    def go (self):
+    def push (self, name):
+        self.queue.push (name)
+        self.qset.add (name)
+
+    def go (self, c):
         # main hoovering thread.
         # first, get a list of blocks we need to fetch via getheaders.
         db = G.block_db
         if not db.num_block:
-            self.queue.push (block_db.genesis_block_hash)
-            self.qset.add (block_db.genesis_block_hash)
+            self.push (block_db.genesis_block_hash)
         try:
             self.running = True
             # get the list of all blocks we need to fetch...
-            while 1:
-                while 1:
-                    c = self.get_live_connection()
-                    if c.other_version.start_height > self.target:
-                        break
-                G.log ('getheaders', 'start')
-                t0 = block_db.timer()
-                names = c.getheaders()
-                G.log ('getheaders', 'stop', '%.02f' % t0.end())
-                if names:
-                    break
-                else:
-                    coro.sleep_relative (5)
-            # start fetching them...
-            coro.spawn (self.drain_queue_thread)
-            for name in names:
-                self.in_flight_sem.acquire(1)
-                self.queue.push (name)
-                self.qset.add (name)
-            self.queue.push (None)
+            G.log ('getheaders', 'start')
+            t0 = block_db.timer()
+            names = c.getheaders()
+            G.log ('getheaders', 'stop', '%.02f' % t0.end())
+            if names:
+                # start fetching them...
+                coro.spawn (self.drain_queue_thread)
+                for name in names:
+                    self.in_flight_sem.acquire(1)
+                    self.push (name)
+                self.queue.push (None)
         finally:
             self.running = False
 
@@ -253,8 +247,7 @@ class BlockHoover:
         except coro.TimeoutError:
             # let some other connection try it...
             G.log ('hoover', 'retry', strname)
-            self.queue.push_front (name)
-            self.qset.add (name)
+            self.push (name)
             self.requested.remove (name)
         except:
             G.log ('hoover', 'error', coro.compact_traceback())
@@ -405,12 +398,12 @@ class Connection (BaseConnection):
             if to_fetch:
                 self.getdata (to_fetch)
 
-    def get_next_500 (self, start_name, stop):
+    def get_next_500 (self, start_name, stop_name):
         db = G.block_db
         height = db.block_num[start_name]
         height = min (db.last_block, height + 500)
         W ('walking backward from height %d\n' % (height,))
-        # find a non-contested starting point
+        # find an uncontested starting point
         while 1:
             names = db.num_block[height]
             if len(names) == 1:
@@ -421,7 +414,7 @@ class Connection (BaseConnection):
         name = list(names)[0]
         #W ('walking backward from %r\n' % (name,))
         r = []
-        while name != start_name and name != stop:
+        while name != start_name and name != stop_name:
             r.append ((OBJ_BLOCK, name))
             name = db.prev[name]
         # put the names in forward order...
@@ -443,9 +436,12 @@ class Connection (BaseConnection):
         if found:
             name = found
             invs = self.get_next_500 (name, hash_stop)
-            #W ('len(invs)=%d\n' % (len(invs),))
-            self.send_invs (invs)
-            self.kick_download = invs[-1][1]
+            #self.send_invs (invs)
+            # send without filtering, we're getting some kind of getblocks
+            #   wild failure mode otherwise...
+            self.send_packet ('inv', caesure.proto.pack_inv ([]))
+            if invs:
+                self.kick_download = invs[-1][1]
 
     def cmd_getdata (self, data):
         blocks = []
