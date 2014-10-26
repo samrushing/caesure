@@ -268,7 +268,7 @@ class handler:
             )
         else:
             PUSH (H3 ('synchronized'))
-        PUSH (H2 ('block leaves'))
+        PUSH (H2 ('blockchain tips'))
         for height, lx in leaves:
             b = self.G.block_db[lx.block_name]
             PUSH (autotable ([
@@ -282,6 +282,7 @@ class handler:
                 ('nonce', b.nonce),
                 ('txns', len(b.transactions)),
             ]))
+            PUSH (elemz ('br'))
         PUSH (H2 ('connections'))
         PUSH (autotable ([
             ('in_conn_sem.avail', G.in_conn_sem.avail),
