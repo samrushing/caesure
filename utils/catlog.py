@@ -35,12 +35,22 @@ class Sync:
                 if self.feed (ch):
                     break
 
+def is_binary (ob):
+    if type(ob) is not bytes:
+        return False
+    else:
+        for ch in ob[:20]:
+            if ord(ch) & 0x80:
+                return True
+
 # note: this is application-specific - remove before putting this file into shrapnel.
 def frob(ob):
     if type(ob) is bytes:
-        if len(ob) > 500:
-            if args.big:
+        if is_binary (ob):
+            if args.big_hex:
                 return ob.encode ('hex')
+            elif args.big:
+                return ob
             else:
                 return '<large>'
         elif len(ob) == 32:
@@ -51,6 +61,8 @@ def frob(ob):
 
 p = argparse.ArgumentParser()
 p.add_argument ('-b', '--big', action='store_true', help="show large strings", default=False)
+p.add_argument ('-bh', '--big-hex', action='store_true', help="show large strings in hex", default=False)
+p.add_argument ('-nb', '--no_blocks', action='store_true', help="elide 'block' packets", default=False)
 args = p.parse_args()
 
 s = Sync()
@@ -61,8 +73,11 @@ while 1:
     block = sys.stdin.read (size)
     (timestamp, info), size = decode (block)
     timestamp /= 1000000.0
-    info = [frob(x) for x in info]
-    print time.ctime (timestamp), info
+    if args.no_blocks and len(info) > 3 and info[2] == 'block':
+        pass
+    else:
+        info = [frob(x) for x in info]
+        print time.ctime (timestamp), info
     magic = sys.stdin.read (4)
     if not magic:
         break
