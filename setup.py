@@ -50,5 +50,5 @@ setup (
     install_requires = ['cython>=0.20.2'],
     license          = 'Simplified BSD',
     cmdclass = {'build_ext': build_ext},
-    scripts = ['scripts/caesure'],
+    scripts = ['scripts/caesure', 'scripts/catlog'],
 )
