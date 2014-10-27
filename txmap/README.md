@@ -47,13 +47,13 @@ Usage
 -----
 Using the txmap object directly::
 
-  darth:txmap rushing$ lpython -i txmap.py
-  reading metadata...done 2.80 secs (last_block=326848)
-  reading block headers...starting at pos 25222924521...(326848)done. scanned 1 blocks in 0.00 secs
-  >>> txmap['9a5de5a52b5c10003ca7955246e3bf07b2bbd4f042b8f77d9d5a5fa581d92ff8']
-  (<000000000000000067ecc744b5ae34eebbde14d21ca4db51652e4d67e155f07e>, 299999, 7, <caesure.bitcoin.TX object at 0x102ec4de0>)
-  >>> txmap['98f1c2c0fa5af068e5a1b486a815acd6458b71cda2daa7ec62d5ec6098e4e60d']
-  (<000000000000000012bb6ff8c02b7e74cfa7e6597c5c238b37340af1db9f14a8>, 324141, 490, <caesure.bitcoin.TX object at 0x111064750>)
-  >>>
+    darth:txmap rushing$ lpython -i txmap.py
+    reading metadata...done 2.80 secs (last_block=326848)
+    reading block headers...starting at pos 25222924521...(326848)done. scanned 1 blocks in 0.00 secs
+    >>> txmap['9a5de5a52b5c10003ca7955246e3bf07b2bbd4f042b8f77d9d5a5fa581d92ff8']
+    (<000000000000000067ecc744b5ae34eebbde14d21ca4db51652e4d67e155f07e>, 299999, 7, <caesure.bitcoin.TX object at 0x102ec4de0>)
+    >>> txmap['98f1c2c0fa5af068e5a1b486a815acd6458b71cda2daa7ec62d5ec6098e4e60d']
+    (<000000000000000012bb6ff8c02b7e74cfa7e6597c5c238b37340af1db9f14a8>, 324141, 490, <caesure.bitcoin.TX object at 0x111064750>)
+    >>>
 
 
