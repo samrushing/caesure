@@ -11,6 +11,7 @@ TODO
 * test suites.  
 * match compiler
 * investigate using our own copy of ripemd160 (using the one in 'hashlib' is a back-door openssl dep.)
+* disk i/o thread for access to blocks.bin.  
 
 ledger
 ======
