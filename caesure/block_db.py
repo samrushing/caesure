@@ -220,6 +220,15 @@ class BlockDB:
     def __contains__ (self, name):
         return name in self.prev
 
+    def get_highest_uncontested_block (self):
+        h = self.last_block
+        while 1:
+            if len(self.num_block[h]) == 1:
+                break
+            else:
+                h -= 1
+        return h, list(self.num_block[h])[0]
+
     # see https://en.bitcoin.it/wiki/Satoshi_Client_Block_Exchange
     # "The getblocks message contains multiple block hashes that the
     #  requesting node already possesses, in order to help the remote
