@@ -2,9 +2,6 @@
 Caesure: a python bitcoin server/node
 =====================================
 
-Your Support Appreciated: 1PDd8exMdhRTLAfNrjBQ9b8DYxkky3cFy1
-------------------------------------------------------------
-
 name
 ----
 
@@ -139,6 +136,17 @@ testnet
 
 Testnet support is currently missing, it's not hard to add it back in if needed.
 
+logging
+-------
+
+Caesure uses a binary (fast, machine-readable) logging system, using
+the ASN1 capabilities of shrapnel.  In utils/catlog.py is a tool that
+can be used for decoding/processing the logfile.  It can be combined
+with "tail -f" to tail the logs, e.g.::
+
+    $ cat /usr/local/caesure/log.asn1 | catlog | less
+    $ tail -f /usr/local/caesure/log.asn1 | catlog | less
+
 fun with the block chain
 ------------------------
 
@@ -198,3 +206,6 @@ dump all its transactions::
     ... 
 
 Note: you can also do all the above via the back door of a running caesure instance.
+
+Your Support Appreciated: 1PDd8exMdhRTLAfNrjBQ9b8DYxkky3cFy1
+------------------------------------------------------------
