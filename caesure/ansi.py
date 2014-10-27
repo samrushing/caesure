@@ -15,9 +15,13 @@ def WT (m):
     "packet to (red-shifted)"
     W (ansi (m, 31))
 
+WR = WT
+
 def WF (m):
     "packet from (blue-shifted)"
     W (ansi (m, 34))
+
+WB = WF
 
 def WY (m):
     W (ansi (m, 33))
