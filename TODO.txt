@@ -3,33 +3,40 @@
 TODO
 ----
 
-* getblocks, getheaders.
+* SIGHASH_NONE, etc..
+* getheaders.
 * hardening.
-* bootstrap.dat (choose one of the three options)
-* investigate using our own copy of ripemd160 (using the one in 'hashlib' is a back-door openssl dep.)
 * sanity check hashes of known blocks
+* script for downloading bootstrap.dat & matching utxo.bin.
+* test suites.  
 * match compiler
+* investigate using our own copy of ripemd160 (using the one in 'hashlib' is a back-door openssl dep.)
 
 ledger
 ======
 
-Our plan is to use a persistent data structure (a functional AA tree) to implement a 'multiple universes' approach to the
-blockchain: within an area at the front of the chain, each block/fork will have its own version of the ledger, each with a separate
-history.  Each fork will update independently.  When a dead fork has fallen far enough behind, its ledger data is abandoned.
+caesure uses a persistent data structure (a functional AA tree) to
+implement a 'many worlds' approach to the UTXO database.  Within an
+area at the front of the chain, each block/fork has its own version of
+the ledger, each with a separate history.  Each fork updates
+independently.  When a dead fork has fallen far enough behind, its
+ledger data is abandoned.
 
-The persistent data structure is rather expensive compared to an stl map, so the latter is used only for an initial scan.  We'll
-probably distribute utxo cache files (currently ~600MB) via bittorrent or other means.
+A faster, stl-based data structure is used for the initial scan.  The
+plan is to distribute paired 'blocks.dat' and 'utxo.bin' files via
+bittorrent.
 
-memory requirements: characterize.
+memory requirements: Oct 2014, ~3GB.
 
 
 in progress
 -----------
-* ledger: [optional, for full forwarding node] live pruning ledger in memory.
-  mostly done, just need to implement the RecentBlocks/frontier, pool/pools, etc.
+* ledger: final task remains - connecting the many-worlds ledger to txn flow.
 
 done
 ----
 * getdata/blocks: before txns, let's forward blocks.
 * proper package installation and directory for blocks.bin etc...
 * use html_help module.
+* getblocks.
+* p2sh.
