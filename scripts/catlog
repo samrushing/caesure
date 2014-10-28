@@ -40,18 +40,14 @@ def is_binary (ob):
     if type(ob) is not bytes:
         return False
     else:
-        for ch in ob[:20]:
-            if ord(ch) & 0x80:
-                return True
+        return '\x00' in ob
 
 # note: this is application-specific - remove before putting this file into shrapnel.
 def frob(ob):
     if type(ob) is bytes:
         if is_binary (ob):
-            if args.big_hex:
+            if len(ob) < 500 or args.big:
                 return ob.encode ('hex')
-            elif args.big:
-                return ob
             else:
                 return '<large>'
         elif len(ob) == 32:
@@ -64,7 +60,6 @@ def main():
     global args
     p = argparse.ArgumentParser (description='caesure asn1 log processor')
     p.add_argument ('-b', '--big', action='store_true', help="show large strings", default=False)
-    p.add_argument ('-bh', '--big-hex', action='store_true', help="show large strings in hex", default=False)
     p.add_argument ('-nb', '--no_blocks', action='store_true', help="ignore 'block' packets [only present if packet logging was enabled]", default=False)
     p.add_argument ('file', help="input file", nargs="?", metavar="FILE")
     args = p.parse_args()
