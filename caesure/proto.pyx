@@ -254,8 +254,10 @@ cdef class VERSION:
         self.nonce = p.u64()
         self.sub_version_num = p.unpack_var_str()
         self.start_height = p.u32()
-        if self.version > 70001:
+        if self.version >= 70001:
             self.relay = p.unpack_bool()
+        else:
+            self.relay = True
         if p.pos < p.len:
             self.extra = p.remains()
         else:
