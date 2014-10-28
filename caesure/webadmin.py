@@ -295,7 +295,7 @@ class handler:
         PUSH (
             H3 ('connections'),
             elem0 ('table'),
-            thead ('#', 'packets', 'address', 'port', 'height', 'services', 'direction', 'version'),
+            thead ('#', 'packets', 'address', 'port', 'height', 'services', 'direction', 'version', 'name'),
         )
         i = 1
         items = self.G.connection_map.items()
@@ -310,7 +310,7 @@ class handler:
                 v = 'N/A'
                 h = 0
                 s = 0
-            PUSH (trow (i, conn.packet_count, ip, port, h, s, conn.direction, v))
+            PUSH (trow (i, conn.packet_count, ip, port, h, s, conn.direction, v, conn.other_name))
             i += 1
         PUSH (elem1 ('table'))
 
