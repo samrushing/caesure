@@ -295,7 +295,7 @@ class handler:
         PUSH (
             H3 ('connections'),
             elem0 ('table'),
-            thead ('#', 'packets', 'address', 'port', 'height', 'services', 'direction', 'version', 'name'),
+            thead ('#', 'packets', 'address', 'port', 'height', 'services', 'relay', 'direction', 'protocol', 'version', 'name'),
         )
         i = 1
         items = self.G.connection_map.items()
@@ -303,14 +303,18 @@ class handler:
         for addr, conn in items:
             ip, port = conn.other_addr
             if conn.other_version is not None:
+                p = conn.other_version.version
                 v = conn.other_version.sub_version_num
                 h = conn.other_version.start_height
                 s = conn.other_version.services
+                r = int(conn.other_version.relay)
             else:
+                p = 0
                 v = 'N/A'
                 h = 0
                 s = 0
-            PUSH (trow (i, conn.packet_count, ip, port, h, s, conn.direction, v, conn.other_name))
+                r = 0
+            PUSH (trow (i, conn.packet_count, ip, port, h, s, r, conn.direction, p, v, conn.other_name))
             i += 1
         PUSH (elem1 ('table'))
 
@@ -326,6 +330,7 @@ class handler:
                 ('bits', '%08x' % (b.bits,)),
                 ('nonce', b.nonce),
                 ('txns', len(b.transactions)),
+                ('size', len(b.raw)),
             ]),
             elem0 ('br'), A ('block explorer', href="http://blockexplorer.com/block/%064x" % (b.name)),
             elem0 ('br'), A ('blockchain.info', href="http://blockchain.info/block/%064x" % (b.name)),
