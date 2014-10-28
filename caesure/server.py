@@ -293,6 +293,7 @@ class Connection (BaseConnection):
         self.waiting = {}
         self.known = set()
         self.kick_download = None
+        self.other_name = ''
         coro.spawn (self.go)
 
     def get_our_block_height (self):
@@ -375,8 +376,32 @@ class Connection (BaseConnection):
         self.send_packet ('verack', '')
         G.hoover.notify_height (self, self.other_version.start_height)
 
+    def frob_ipv6 (self, addr):
+        # this belongs in shrapnel, or we wait for py3 and its ipaddress module.
+        parts = addr.split (':')
+        if '' in parts:
+            # only one :: part is allowed...
+            i = parts.index ('')
+            parts = parts[:i] + (['0'] * (9 - len(parts))) + parts[i+1:]
+        words = [int(x, 16) for x in parts]
+        return '.'.join (''.join (['%04x' % x for x in words])[::-1])
+
+    def lookup_ptr (self):
+        ip = self.other_addr[0]
+        if '.' in ip:
+            ip = '.'.join (ip.split('.')[::-1]) + '.in-addr.arpa'
+        else:
+            ip = self.frob_ipv6 (ip) + '.ip6.arpa'
+        r = coro.get_resolver()
+        try:
+            answers = r.cache.query (ip, 'PTR')
+            self.other_name = answers[0][1]
+        except coro.dns.exceptions.DNS_Error:
+            pass
+
     def cmd_verack (self, data):
-        pass
+        # hey, we're having a conversation. what's your name?
+        coro.spawn (self.lookup_ptr)
 
     def cmd_addr (self, data):
         for timestamp, entry in caesure.proto.unpack_addr (data):
