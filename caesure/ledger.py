@@ -131,6 +131,7 @@ class RecentBlocks:
 class LedgerState:
 
     save_path = 'utxo.bin'
+    do_yields = True
 
     def __init__ (self, load=False):
         self.outpoints = UTXO_Map()
@@ -261,13 +262,13 @@ class LedgerState:
                 amt, oscript = self.outpoints.pop_utxo (str(outpoint), index)
                 #W ('.')
                 if verify:
-                    tx.verify0 (j, oscript)
+                    tx.verify (j, oscript, b.timestamp)
                 # XXX if it fails to verify, put it back!
                 input_sum += amt
             output_sum = self.store_outputs (tx)
             fees += input_sum - output_sum
             self.total -= input_sum
-            if i % 50 == 0:
+            if self.do_yields and i % 50 == 0:
                 coro.yield_slice()
         self.fees += fees
         reward1 = compute_reward (height)
