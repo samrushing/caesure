@@ -11,11 +11,13 @@ from pprint import pprint as pp
 import caesure.proto
 
 from caesure.proto import base58_encode, base58_decode, hexify, Name
-from caesure.script import eval_script, verifying_machine, pprint_script, unrender_int
+from caesure.script import verifying_machine, verifying_machine_p2sh, pprint_script, unrender_int
 from caesure._script import parse_script, ScriptError
 
 def P (msg):
     sys.stdout.write (msg)
+
+W = sys.stderr.write
 
 # these are overriden for testnet
 BITCOIN_PORT = 8333
@@ -148,25 +150,13 @@ class TX (caesure.proto.TX):
     def render (self):
         return self.pack()
 
-    # Hugely Helpful: http://forum.bitcoin.org/index.php?topic=2957.20
-
-    def get_ecdsa_hash (self, index, sub_script, hash_type):
-        # XXX see script.cpp:SignatureHash() - looks like this is where
-        #   we make mods depending on <hash_type>
-        tx0 = self.copy()
-        for i in range (len (tx0.inputs)):
-            outpoint, script, sequence = tx0.inputs[i]
-            if i == index:
-                script = sub_script
-            else:
-                script = ''
-            tx0.inputs[i] = outpoint, script, sequence
-        return tx0.render() + struct.pack ('<I', hash_type)
-
-    def verify0 (self, index, lock_script):
+    def verify (self, index, lock_script, block_timestamp):
         outpoint, unlock_script, sequence = self.inputs[index]
-        m = verifying_machine (self, index)
-        r = eval_script (m, lock_script, unlock_script)
+        if block_timestamp >= 1333238400:
+            m = verifying_machine_p2sh (self, index, KEY)
+        else:
+            m = verifying_machine (self, index, KEY)
+        r = m.eval_script (lock_script, unlock_script)
         if r is None:
             # if the script did not end in a CHECKSIG op, we need
             #   to check the top of the stack (essentially, OP_VERIFY)
@@ -178,11 +168,6 @@ class TX (caesure.proto.TX):
         else:
             # this can happen if r == 0 (verify failed) or r == -1 (openssl error)
             raise VerifyError
-
-    def verify1 (self, pub_key, sig, to_hash):
-        k = KEY()
-        k.set_pubkey (pub_key)
-        return k.verify (to_hash, sig)
 
 class BadBlock (Exception):
     pass
