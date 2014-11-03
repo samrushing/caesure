@@ -12,11 +12,10 @@ def HD (s):
     return s.decode ('hex')
 
 # XXX fuzz these guys up and force them to fail.
-def test (lock_script, tx_raw, index):
+def test (lock_script, tx_raw, index, block_timestamp):
     tx = TX()
     tx.unpack (tx_raw)
-    m = verifying_machine (tx, index)
-    tx.verify0 (index, lock_script),
+    tx.verify (index, lock_script, block_timestamp)
     
 def test_all():
     import sys
@@ -24,12 +23,13 @@ def test_all():
     bad  = 0
     
     for line in open (sys.argv[1], 'rb'):
-        lock_script, txraw, index = line.split()
+        lock_script, txraw, index, block_timestamp = line.split()
         lock_script = HD (lock_script)
         txraw = HD (txraw)
         index = int (index)
+        block_timestamp = int (block_timestamp)
         try:
-            test (lock_script, txraw, index)
+            test (lock_script, txraw, index, block_timestamp)
             good += 1
         except:
             print coro.compact_traceback()

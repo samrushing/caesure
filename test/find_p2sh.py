@@ -31,7 +31,7 @@ def find (db, start, stop):
         for tx in b.transactions:
             for j, (outpoint, unlock, sequence) in enumerate (tx.inputs):
                 if multi.has_key (outpoint):
-                    print multi[outpoint].encode ('hex'), tx.raw.encode('hex'), j
+                    print multi[outpoint].encode ('hex'), tx.raw.encode('hex'), j, b.timestamp
 
 # try: python find_p2sh.py 310000 312000
 if __name__ == '__main__':
