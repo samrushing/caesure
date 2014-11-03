@@ -99,13 +99,13 @@ cpdef bytes make_push_str (bytes s):
         return chars[ls] + s
     elif ls < 0xff:
         # PUSHDATA1
-        return c'\x4c' + chars[ls] + s
+        return b'\x4c' + chars[ls] + s
     elif ls < 0xffff:
         # PUSHDATA2
-        return c'\x4d' + pack_u16(ls) + s
+        return b'\x4d' + pack_u16(ls) + s
     else:
         # PUSHDATA4
-        return c'\x4e' + pack_u32(ls) + s
+        return b'\x4e' + pack_u32(ls) + s
 
 class ScriptError (Exception):
     pass
@@ -129,6 +129,7 @@ cdef enum OP_KIND:
     KIND_COND = 1,
     KIND_OP = 2,
     KIND_CHECK = 3,
+    KIND_SEP = 4,
 
 cdef uint8_t disabled[255]
 disabled_set = {
@@ -220,6 +221,7 @@ cdef class script_parser:
                 return code
             elif insn == OP_CODESEPARATOR:
                 code_sep = self.pos
+                code.append ((KIND_SEP,))
             elif insn in (OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_CHECKMULTISIG, OP_CHECKMULTISIGVERIFY):
                 code.append ((KIND_CHECK, insn, self.s[code_sep:]))
             elif insn in (OP_VERIF, OP_VERNOTIF):
@@ -274,4 +276,6 @@ cpdef bytes unparse_script (list p):
         elif kind == KIND_OP:
             op = insn[1]
             r.append (chars[op])
+        elif kind == KIND_SEP:
+            r.append (chars[OP_CODESEPARATOR])
     return b''.join (r)
