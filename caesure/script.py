@@ -383,7 +383,7 @@ class verifying_machine (machine):
             else:
                 script = ''
             tx1.inputs[i] = outpoint, script, sequence
-        hash_type0 = hash_type & 0x31
+        hash_type0 = hash_type & 0x1f
         if hash_type0 == SIGHASH_ALL or hash_type0 == 0:
             # "no special further handling occurs"
             pass
@@ -418,6 +418,7 @@ class verifying_machine (machine):
 
     def check_one_sig (self, pub, sig, s):
         sig, hash_type = sig[:-1], ord(sig[-1])
+        #W ('hash_type=%d\n' % (hash_type,))
         to_hash = self.get_ecdsa_hash (self.tx, self.index, s, hash_type)
         #W ('to_hash = %s\n' % (to_hash.encode ("hex")))
         return self.verify_sig (pub, sig, to_hash)
@@ -486,14 +487,12 @@ class verifying_machine (machine):
                         do_verify (self)
                     else:
                         self.push_int (int(result == 1))
-                    return result
                 elif op in (OP_CHECKMULTISIG, OP_CHECKMULTISIGVERIFY):
                     result = self.check_multi_sig (s0)
                     if op == OP_CHECKMULTISIGVERIFY:
                         do_verify (self)
                     else:
                         self.push_int (int(result == 1))
-                    return result
                 else:
                     raise NotImplementedError
             elif kind == KIND_SEP:
