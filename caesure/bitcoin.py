@@ -156,18 +156,7 @@ class TX (caesure.proto.TX):
             m = verifying_machine_p2sh (self, index, KEY)
         else:
             m = verifying_machine (self, index, KEY)
-        r = m.eval_script (lock_script, unlock_script)
-        if r is None:
-            # if the script did not end in a CHECKSIG op, we need
-            #   to check the top of the stack (essentially, OP_VERIFY)
-            m.need (1)
-            if not m.truth():
-                raise VerifyError
-        elif r == 1:
-            pass
-        else:
-            # this can happen if r == 0 (verify failed) or r == -1 (openssl error)
-            raise VerifyError
+        m.eval_script (lock_script, unlock_script)
 
 class BadBlock (Exception):
     pass
