@@ -14,6 +14,7 @@ class KEY:
     def set_pubkey (self, key):
         self.k.set_pubkey (key)
 
-    def verify (self, data, sig):
-        vhash = dhash (data)
-        return self.k.verify (vhash, sig)
+    def verify (self, data, sig, already):
+        if not already:
+            data = dhash (data)
+        return self.k.verify (data, sig)

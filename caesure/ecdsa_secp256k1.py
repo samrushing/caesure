@@ -11,5 +11,8 @@ class KEY:
     def set_pubkey (self, key):
         self.p = key
 
-    def verify (self, data, sig):
-        return caesure.secp256k1.verify (self.p, dhash (data), sig)
+    def verify (self, data, sig, already):
+        if not already:
+            data = dhash (data)
+        return caesure.secp256k1.verify (self.p, data, sig)
+    

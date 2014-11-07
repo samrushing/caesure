@@ -48,8 +48,10 @@ class KEY:
         # probably need to translate asn1
         self.p = pubkey_to_cryptopp (key)
 
-    def verify (self, data, sig):
+    def verify (self, data, sig, already):
         # crypto++ ECDSA<ECP, SHA256>::PublicKey hashes *once*, we need *twice*.
+        if not already:
+            raise NotImplementedError ("crypto++ cannot verify pre-hashed data")
         h = hashlib.new ('sha256')
         h.update (data)
         d = h.digest()
