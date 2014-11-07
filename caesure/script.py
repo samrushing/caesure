@@ -31,13 +31,6 @@ SIGHASH_NONE         = 0x02
 SIGHASH_SINGLE       = 0x03
 SIGHASH_ANYONECANPAY = 0x80
 
-# confusion: I believe 'standard' transactions != 'valid scripts', I think They
-#  have chosen a subset of legal transactions that are considered 'standard'.
-
-# status: passes the 'valid' unit tests from bitcoin/bitcoin, but does
-#   not yet fail all the 'invalid' tests. [mostly constraints like op
-#   count, stack size, etc...]
-
 class OPCODES:
     # push value
     OP_0 = 0x00
@@ -258,14 +251,15 @@ def pprint_script (p):
             else:
                 r.append ('0x' + data.encode ('hex'))
         elif kind == KIND_COND:
-            _, sense, sub0, sub1 = insn
+            _, sense, sub0, elses = insn
             if sense:
                 op = 'IF'
             else:
                 op = 'NOTIF'
-            r.append ([op] + pprint_script (sub0))
-            if sub1:
-                r.append (['ELSE'] + pprint_script (sub1))
+            clause = [op] + pprint_script (sub0)
+            for sub1 in elses:
+                clause.extend (['ELSE'] + pprint_script (sub1))
+            r.append (clause)
         elif kind == KIND_CHECK:
             _, op, _ = insn
             r.append (opcode_map_rev[op])
@@ -352,15 +346,22 @@ class machine:
             raise AltStackUnderflow
 
     def dump (self):
-        W ('  alt=%r\n' % [x.encode('hex') for x in self.altstack],)
-        W ('stack=%r\n' % [x.encode('hex') for x in self.stack],)
-
+        if len(self.altstack):
+            W ('  alt:\n')
+            for item in self.altstack:
+                W ('    %r\n' % (item.encode ('hex'),))                
+        W ('  stack:\n')
+        for item in self.stack:
+            W ('    %r\n' % (item.encode ('hex'),))
+            
     def truth (self):
-        return is_true (self.pop())
+        return is_true (self.top())
 
 # machine with placeholders for things we need to perform tx verification
 
 class verifying_machine (machine):
+
+    debug = False
 
     def __init__ (self, tx, index, KEY):
         machine.__init__ (self)
@@ -368,14 +369,19 @@ class verifying_machine (machine):
         self.index = index
         self.KEY = KEY
 
-    def verify_sig (self, pub_key, sig, to_hash):
+    def verify_sig (self, pub_key, sig, data, already):
         k = self.KEY()
         k.set_pubkey (pub_key)
-        return k.verify (to_hash, sig)
+        r = k.verify (data, sig, already)
+        if r == -1:
+            # bogus signatures
+            r  = 0
+        assert (r in (0, 1))
+        return r
 
     # Hugely Helpful: http://forum.bitcoin.org/index.php?topic=2957.20
 
-    def get_ecdsa_hash (self, tx0, index, sub_script, hash_type):
+    def get_tx_for_hash (self, tx0, index, sub_script, hash_type):
         tx1 = tx0.copy()
         for i, (outpoint, script, sequence)  in enumerate (tx1.inputs):
             if i == index:
@@ -394,7 +400,8 @@ class verifying_machine (machine):
                     tx1.inputs[i] = output, script, 0
         elif hash_type0 == SIGHASH_SINGLE:
             if index >= len(tx1.outputs):
-                raise BadScript
+                #raise BadScript ("SIGHASH_SINGLE: not enough outputs")
+                return True, '\x01' + ('\x00' * 31) # really?
             tx1.outputs = tx1.outputs[:index+1]
             for i in range (index):
                 tx1.outputs[i] = 0xffffffffffffffff, ''
@@ -402,26 +409,34 @@ class verifying_machine (machine):
                 if i != index:
                     tx1.inputs[i] = output, script, 0
         else:
-            raise BadScript
+            # XXX looking at peter todd's version of python-bitcoinlib,
+            #   it appears that any value here that is *not* NONE or SINGLE
+            #   implies ALL?
+            #raise BadScript ('hash_type: 0x%x' % (hash_type0,))
+            pass
         if hash_type & SIGHASH_ANYONECANPAY:
             tx1.inputs = [tx1.inputs[index]]
-        return tx1.render() + struct.pack ('<I', hash_type)
+        return False, tx1.render() + struct.pack ('<I', hash_type)
 
     def check_sig (self, s):
         pub_key = self.pop()
         sig = self.pop()
         s0 = parse_script (s)
         s1 = remove_codeseps (s0)
-        s2 = remove_sigs (s1, [sig])  # rare?
+        s2 = remove_sigs (s1, [sig])
         s3 = unparse_script (s2)
         return self.check_one_sig (pub_key, sig, s3)
 
     def check_one_sig (self, pub, sig, s):
-        sig, hash_type = sig[:-1], ord(sig[-1])
-        #W ('hash_type=%d\n' % (hash_type,))
-        to_hash = self.get_ecdsa_hash (self.tx, self.index, s, hash_type)
-        #W ('to_hash = %s\n' % (to_hash.encode ("hex")))
-        return self.verify_sig (pub, sig, to_hash)
+        if not sig:
+            # XXX check for canonical form here?
+            return 0
+        else:
+            sig, hash_type = sig[:-1], ord(sig[-1])
+            #W ('hash_type=0x%x\n' % (hash_type,))
+            already_hashed, data = self.get_tx_for_hash (self.tx, self.index, s, hash_type)
+            #W ('data = %s\n' % (data.encode ("hex")))
+            return self.verify_sig (pub, sig, data, already_hashed)
 
     def check_multi_sig (self, s):
         npub = self.pop_int()
@@ -458,13 +473,17 @@ class verifying_machine (machine):
         unlock_script = parse_script (unlock_script)
         self._eval_script (unlock_script)
         self.clear_alt()
-        return self._eval_script (lock_script)
+        self._eval_script (lock_script)
+        self.need (1)
+        if not self.truth():
+            raise VerifyError
 
     def _eval_script (self, s):
         for insn in s:
-            #print '---------------'
-            #self.dump()
-            #pinsn (insn)
+            if self.debug:
+                W ('---------------\n')
+                self.dump()
+                pinsn (insn)
             kind = insn[0]
             if kind == KIND_PUSH:
                 _, data = insn
@@ -473,36 +492,39 @@ class verifying_machine (machine):
                 _, op = insn
                 get_op_fun(op)(self)
             elif kind == KIND_COND:
-                _, sense, tcode, fcode = insn
+                _, sense, tcode, elses = insn
                 truth = self.truth()
+                self.pop()
                 if (sense and truth) or (not sense and not truth):
                     self._eval_script (tcode)
-                elif fcode is not None:
-                    self._eval_script (fcode)
+                    did = True
+                else:
+                    did = False
+                for ecode in elses:
+                    if not did:
+                        self._eval_script (ecode)
+                        did = True
+                    else:
+                        did = False
             elif kind == KIND_CHECK:
                 _, op, s0 = insn
                 if op in (OP_CHECKSIG, OP_CHECKSIGVERIFY):
-                    result = self.check_sig (s0)
+                    self.push_int (self.check_sig (s0) == 1)
                     if op == OP_CHECKSIGVERIFY:
                         do_verify (self)
-                    else:
-                        self.push_int (int(result == 1))
                 elif op in (OP_CHECKMULTISIG, OP_CHECKMULTISIGVERIFY):
-                    result = self.check_multi_sig (s0)
+                    self.push_int (self.check_multi_sig (s0) == 1)
                     if op == OP_CHECKMULTISIGVERIFY:
                         do_verify (self)
-                    else:
-                        self.push_int (int(result == 1))
                 else:
                     raise NotImplementedError
             elif kind == KIND_SEP:
                 pass
             else:
                 raise ValueError ("unknown kind: %r" % (kind,))
-        #print '---------------'
-        #self.dump()
-        # notify the caller when the script does *not* end in a CHECKSIG operation.
-        return None
+        if self.debug:
+            W ('---------------\n')
+            self.dump()
 
 class verifying_machine_p2sh (verifying_machine):
 
@@ -527,6 +549,8 @@ class verifying_machine_p2sh (verifying_machine):
                 #W ('p2sh_script=%s\n' % (pprint_script (p2sh_script),))
                 unlock_script = unlock_script[:-1] + p2sh_script
                 #W ('unlock_script=%s\n' % (pprint_script (unlock_script),))
+                if self.debug:
+                    W ('p2sh unlock_script: %s\n' % (pprint_script (unlock_script),))
                 return self._eval_script (unlock_script)
         else:
             self._eval_script (unlock_script)
@@ -547,9 +571,7 @@ def remove_sigs (p, sigs):
 
 def do_equal (m):
     m.need(2)
-    v0 = m.pop()
-    v1 = m.pop()
-    if v0 == v1:
+    if m.pop() == m.pop():
         m.push_int (1)
     else:
         m.push_int (0)
@@ -557,10 +579,14 @@ def do_verify (m):
     m.need (1)
     if not m.truth():
         raise ScriptFailure
+    else:
+        m.pop()
 def do_equalverify (m):
     m.need (2)
     do_equal (m)
     do_verify (m)
+def do_return (m):
+    raise ScriptFailure
 def do_1negate (m):
     m.push_int (-1)
 def do_nop (m):
@@ -894,18 +920,20 @@ def get_op_fun (opcode):
 def pinsn (insn):
     kind = insn[0]
     if kind == KIND_PUSH:
-        print 'push %r' % (insn[1])
+        W ('push %r\n' % (insn[1].encode ('hex'),))
     elif kind == KIND_OP:
         _, op = insn
-        print '%s' % (opcode_map_rev.get (op, str(op)))
+        W  ('%s\n' % (opcode_map_rev.get (op, str(op)),))
     elif kind == KIND_COND:
         if insn[1]:
-            print 'IF'
+            W ('IF\n')
         else:
-            print 'NOTIF'
+            W ('NOTIF\n')
     elif kind == KIND_CHECK:
         op = insn[1]
-        print '%s' % (opcode_map_rev.get (op, str(op)))
+        W ('%s\n' % (opcode_map_rev.get (op, str(op)),))
     elif kind == KIND_SEP:
-        print 'OP_CODESEPARATOR'
+        W ('OP_CODESEPARATOR\n')
+    else:
+        raise ValueError
 
