@@ -207,15 +207,14 @@ cdef class script_parser:
             elif insn in (OP_IF, OP_NOTIF):
                 sub0 = self.parse (&end)
                 sense = insn == OP_IF
-                if end == OP_ELSE:
+                elses = []
+                while end == OP_ELSE:
                     sub1 = self.parse (&end)
-                    if end != OP_ENDIF:
-                        raise BadScript (self.pos)
-                    code.append ((KIND_COND, sense, sub0, sub1))
-                elif end != OP_ENDIF:
+                    elses.append (sub1)
+                if end != OP_ENDIF:
                     raise BadScript (self.pos)
                 else:
-                    code.append ((KIND_COND, sense, sub0, None))
+                    code.append ((KIND_COND, sense, sub0, elses))
             elif insn in (OP_ELSE, OP_ENDIF):
                 out_end[0] = insn
                 return code
@@ -259,14 +258,14 @@ cpdef bytes unparse_script (list p):
         if kind == KIND_PUSH:
             r.append (make_push_str (insn[1]))
         elif kind == KIND_COND:
-            _, sense, sub0, sub1 = insn
+            _, sense, sub0, elses = insn
             if sense:
                 op = OP_IF
             else:
                 op = OP_NOTIF
             r.append (chars[op])
             r.append (unparse_script (sub0))
-            if sub1:
+            for sub1 in elses:
                 r.append (chars[OP_ELSE])
                 r.append (unparse_script (sub1))
             r.append (chars[OP_ENDIF])
