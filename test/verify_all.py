@@ -35,11 +35,11 @@ def verify_wrapper (self, index, lock_script, block_timestamp):
     except:
         W ('%064x %d failed\n' % (self.name, index))
         fails.write (
-            '%s %s %d %s %d\n' % (
+            '#%s\n%s %s %d %d\n' % (
                 hex(self.name),
+                lock_script.encode ('hex'),
                 self.raw.encode ('hex'),
                 index,
-                lock_script.encode ('hex'),
                 block_timestamp
             )
         )
