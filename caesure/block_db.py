@@ -169,6 +169,23 @@ class BlockDB:
         b.unpack (self.get_block (name))
         return b
 
+    def get_names (self):
+        h, name = self.get_highest_uncontested_block()
+        names = []
+        while 1:
+            probe = self.prev.get (name, None)
+            if probe is not None:
+                names.append (name)
+                name = probe
+            else:
+                break
+        names.reverse()
+        return names
+
+    def __iter__ (self):
+        for name in self.get_names():
+            yield self[name]
+
     def __len__ (self):
         return len (self.blocks)
 
