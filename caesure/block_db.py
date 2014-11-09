@@ -1,6 +1,5 @@
 # -*- Mode: Python -*-
 
-import cPickle
 import os
 import sys
 import coro
@@ -8,6 +7,9 @@ import caesure.proto
 
 from caesure.bitcoin import *
 from caesure.ansi import *
+
+import coro.asn1.python
+import coro.asn1.ber
 
 # BlockDB file format: (<8 bytes of size> <block>)+
 #
@@ -53,42 +55,48 @@ class BlockDB:
             self.dump_metadata()
 
     def dump_metadata (self):
+        from coro.asn1.data_file import DataFileWriter
         from __main__ import G
         W ('saving metadata...')
         t0 = timer()
         metadata_path = os.path.join (G.args.base, self.metadata_path)
         fileob = open (metadata_path + '.tmp', 'wb')
-        cPickle.dump (1, fileob, 2)
-        cPickle.dump (len(self.blocks), fileob, 2)
+        df = DataFileWriter (fileob)
+        version = 1
+        df.write_object ([version, len(self.blocks)])
         for a, pos in self.blocks.iteritems():
-            cPickle.dump (
-                [str(a), pos, self.block_num[a], str(self.prev[a])],
-                fileob,
-                2
+            df.write_object (
+                [str(a), pos, self.block_num[a], str(self.prev[a])]
             )
         fileob.close()
         os.rename (metadata_path + '.tmp', metadata_path)
         W ('done %.2f secs\n' % (t0.end(),))
 
     def load_metadata (self, fileob):
+        from coro.asn1.data_file import DataFileReader
         W ('reading metadata...')
         t0 = timer()
-        version = cPickle.load (fileob)
-        assert (version == 1)
-        nblocks = cPickle.load (fileob)
         max_block = 0
         max_pos = 0
-        for i in xrange (nblocks):
-            name, pos, num, prev = cPickle.load (fileob)
-            name = Name (name)
-            prev = Name (prev)
-            self.blocks[name] = pos
-            max_pos = max (pos, max_pos)
-            self.prev[name] = prev
-            self.num_block.setdefault (num, set()).add (name)
-            self.block_num[name] = num
-            max_block = max (max_block, num)
-        self.last_block = max_block
+        df = DataFileReader (fileob)
+        try:
+            info = df.read_object()
+            version = info[0]
+            assert (version == 1)
+            version, nblocks = info
+            for i in xrange (nblocks):
+                name, pos, num, prev = df.read_object()
+                name = Name (name)
+                prev = Name (prev)
+                self.blocks[name] = pos
+                max_pos = max (pos, max_pos)
+                self.prev[name] = prev
+                self.num_block.setdefault (num, set()).add (name)
+                self.block_num[name] = num
+                max_block = max (max_block, num)
+            self.last_block = max_block
+        except coro.asn1.ber.DecodeError:
+            W ('error decoding metadata file...\n')
         W ('done %.2f secs (last_block=%d)\n' % (t0.end(), self.last_block))
         return max_pos
 
