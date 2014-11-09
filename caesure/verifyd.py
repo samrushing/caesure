@@ -18,17 +18,15 @@ def serve (G):
         pass
     s.bind (path)
     s.listen (100)
-    try:
-        while 1:
-            conn, addr = s.accept()
-            if coro.fork() == 0:
-                coro.spawn (go, G, conn)
-                return
-            else:
-                conn.close()
-        s.close()
-    finally:
-        coro.set_exit()
+    while 1:
+        conn, addr = s.accept()
+        if coro.fork() == 0:
+            coro.spawn (go, G, conn)
+            s.close()
+            return
+        else:
+            conn.close()
+    coro.set_exit()
 
 def go (G, s):
     try:
@@ -42,7 +40,7 @@ def go (G, s):
                 packet = s.recv_exact (pktlen)
                 data, size = decode (packet)
                 assert size == pktlen
-                [block_timestamp, raw_tx, lock_scripts] = data
+                [index, block_timestamp, raw_tx, lock_scripts] = data
                 tx = TX()
                 tx.unpack (raw_tx)
                 result = True
@@ -52,7 +50,7 @@ def go (G, s):
                         tx.verify (i, lock_script, block_timestamp)
                     except SystemError:
                         result = False
-                pkt = encode (result)
+                pkt = encode ((result, index))
                 s.writev ([struct.pack ('>I', len(pkt)), pkt])
     except EOFError:
         pass

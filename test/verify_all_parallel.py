@@ -28,8 +28,8 @@ class VerifyClient:
 
     def go (self):
         while 1:
-            co, tx, timestamp, locks = self.fifo.pop()
-            pkt = encode ([timestamp, tx.raw, locks])
+            job_id, tx, timestamp, locks = self.fifo.pop()
+            pkt = encode ([job_id, timestamp, tx.raw, locks])
             self.sock.writev ([struct.pack ('>I', len(pkt)), pkt])
             pktlen = self.sock.recv_exact (4)
             if not pktlen:
@@ -37,21 +37,32 @@ class VerifyClient:
             else:
                 pktlen, = struct.unpack ('>I', pktlen)
                 pkt = self.sock.recv_exact (pktlen)
-                result, size = decode (pkt)
+                (result, index), size = decode (pkt)
                 assert (pktlen == size)
-                co.schedule (result)
+                G.pool.retire (index, result)
 
 class Pool:
 
     def __init__ (self, G):
+        self.results = []
         self.fifo = coro.fifo()
+        self.isem = coro.inverted_semaphore()
         for i in range (G.args.nthreads):
             coro.spawn (VerifyClient, G, self.fifo)
 
-    def request (self, tx, timestamp, lock_scripts):
-        me = coro.current()
-        self.fifo.push ((me, tx, timestamp, lock_scripts))
-        return me._yield()
+    def push_request (self, index, tx, timestamp, lock_scripts):
+        self.fifo.push ((index, tx, timestamp, lock_scripts))
+        self.isem.acquire(1)
+
+    def retire (self, index, result):
+        self.results.append ((index, result))
+        self.isem.release(1)
+
+    def wait (self):
+        self.isem.block_till_zero()
+        results, self.results = self.results, []
+        results.sort()
+        return results
 
 class ParallelLedgerState (LedgerState):
 
@@ -79,32 +90,37 @@ class ParallelLedgerState (LedgerState):
                     independent.add (tx)
             if not len(independent):
                 raise ValueError
-            self.verify_txns (list(independent), b)
+            results = self.verify_txns (list(independent), b)
             txns.difference_update (independent)
 
         self.height = height
         self.block_name = b.name
 
     def verify_txns (self, txns, b):
-        for i in range (0, len (txns), 20):
-            #W ('doing in_parallel...\n')
-            results = coro.in_parallel ([(self.verify_txn, (tx, b)) for tx in txns[i:i+20]])
-            for tx in txns[i:i+20]:
-                self.store_outputs (tx)
+        #W ('pushing %d txns...\n' % (len(txns),))
+        for i, tx in enumerate (txns):
+            self.push_verify_txn (i, tx, b)
+        results = G.pool.wait()
+        #W ('got results=%r\n' % (results,))
+        for i, result in results:
+            if result:
+                self.store_outputs (txns[i])
+            else:
+                W ('failed %r:%d\n' % (txns[i].name, i))
+        # remove those outputs!
+        for tx in txns:
+            for i in range (len (tx.inputs)):
+                (outpoint, index), script, sequence = tx.inputs[i]
+                amt, oscript = self.outpoints.pop_utxo (str(outpoint), index)
+        return results
 
-    def verify_txn (self, tx, b):
+    def push_verify_txn (self, job_id, tx, b):
         lock_scripts = []
-        input_sum = 0
         for i in range (len (tx.inputs)):
             (outpoint, index), script, sequence = tx.inputs[i]
             amt, oscript = self.outpoints.get_utxo (str(outpoint), index)
             lock_scripts.append (oscript)
-            input_sum += amt
-        result = G.pool.request (tx, b.timestamp, lock_scripts)
-        #W ('[%r]' % (result,))
-        if result is not True:
-            W ('failed to validate %r\n' % (tx.name,))
-        return input_sum
+        G.pool.push_request (job_id, tx, b.timestamp, lock_scripts)
 
 def get_names (db, name, h, stop):
     names = []
@@ -131,6 +147,7 @@ def main (db, G):
         lx.feed_block (b, height, verify=True)
         if height % 1000 == 0:
             WB ('[%d]' % (height,))
+    coro.set_exit()
     
 if __name__ == '__main__':
     import argparse
@@ -141,7 +158,7 @@ if __name__ == '__main__':
     p.add_argument ('-b', '--base', help='data directory', default='/usr/local/caesure', metavar='PATH')
     p.add_argument ('--stop', type=int, help='stopping block height', default=10000)
     p.add_argument ('-f', '--file', help='server socket filename', default='verifyd.sock', metavar='PATH')
-    p.add_argument ('--nthreads', type=int, help='number of verifyd client threads', default=8)
+    p.add_argument ('-n', '--nthreads', type=int, help='number of verifyd client threads', default=8)
     G.args = p.parse_args()
     db = G.block_db = BlockDB (read_only=True)
     G.pool = Pool (G)
