@@ -357,6 +357,9 @@ class machine:
     def truth (self):
         return is_true (self.top())
 
+class VerifyError (Exception):
+    pass
+
 # machine with placeholders for things we need to perform tx verification
 
 class verifying_machine (machine):
@@ -445,6 +448,9 @@ class verifying_machine (machine):
         nsig = self.pop_int()
         #print 'nsig=', nsig
         sigs = [self.pop() for x in range (nsig)]
+
+        # forever broken?
+        self.pop()
 
         pubs = pubs[::-1]
         sigs = sigs[::-1]

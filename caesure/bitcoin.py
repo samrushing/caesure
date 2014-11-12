@@ -53,8 +53,6 @@ def float_to_btc (f):
 
 class BadAddress (Exception):
     pass
-class VerifyError (Exception):
-    pass
 
 def key_to_address (s, version=0):
     s = chr(version) + s
