@@ -3,12 +3,10 @@
 TODO
 ----
 
-* SIGHASH_NONE, etc..
 * getheaders.
 * hardening.
 * sanity check hashes of known blocks
 * script for downloading bootstrap.dat & matching utxo.bin.
-* test suites.  
 * match compiler
 * investigate using our own copy of ripemd160 (using the one in 'hashlib' is a back-door openssl dep.)
 * disk i/o thread for access to blocks.bin.  
@@ -33,6 +31,7 @@ memory requirements: Oct 2014, ~3GB.
 in progress
 -----------
 * ledger: final task remains - connecting the many-worlds ledger to txn flow.
+* test suites.  
 
 done
 ----
@@ -41,3 +40,4 @@ done
 * use html_help module.
 * getblocks.
 * p2sh.
+* SIGHASH_NONE, etc..
