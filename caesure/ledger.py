@@ -43,11 +43,10 @@ class RecentBlocks:
                 # we know the previous block is in the database...
                 self.new_block (G.block_db[block.prev_block], verify)
                 self.new_block (block, verify)
-            elif height < self.highest - self.horizon:
+            elif height <= (self.highest - self.horizon):
                 G.log ('recent', 'stale', height, str(block.name), str(block.prev_block))
             else:
                 G.log ('recent', 'nochain', height, str(block.name), str(block.prev_block))
-                import pdb; pdb.set_trace()
         else:
             self.blocks[block.name] = tip.extend (block, tip.height + 1, verify)
             if len(self.blocks) > 2:
