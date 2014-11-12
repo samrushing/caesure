@@ -116,6 +116,10 @@ except ImportError:
 
 class TX (caesure.proto.TX):
 
+    def __init__ (self):
+        self.version = 1
+        self.lock_time = 0
+
     def copy (self):
         tx0 = TX()
         tx0.version = self.version
@@ -125,7 +129,7 @@ class TX (caesure.proto.TX):
         return tx0
 
     def get_hash (self):
-        return dhash (self.render())
+        return Name (dhash (self.render()))
 
     def dump (self, fout=sys.stdout):
         D = fout.write
