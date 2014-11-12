@@ -128,8 +128,7 @@ The format of the bootstrap.dat file is nearly identical to caesure's native for
     $ python scripts/convert_bootstrap.py bootstrap.dat
     $ mv bootstrap.dat /usr/local/caesure/blocks.bin
 
-You should be able to find the torrent here: http://sourceforge.net/projects/bitcoin/files/Bitcoin/blockchain/
-
+You should be able to find the torrent here: https://bitcoin.org/bin/blockchain/
 
 testnet
 -------
