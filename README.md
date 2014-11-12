@@ -36,17 +36,27 @@ See TODO.txt for more detail on status.
 design
 ------
 
-Since this uses shrapnel, it leaves out Windows users, but still allows bsd, darwin/osx, & linux.
+Since this uses shrapnel, it leaves out Windows users, but still
+allows bsd, darwin/osx, & linux.
 
-The target platform is a well-connected machine (i.e., in a co-lo facility) with fast disk and lots of memory.
-[As of October 2014, the process size is approximately 2GB.  I would recommend at least 6GB of memory, the more the merrier.]
+The target platform is a well-connected machine (i.e., in a colocation
+facility) with fast disk and lots of memory.  [As of October 2014, the
+process size is approximately 3GB.  I would recommend at least 6GB of
+memory, the more the merrier.]
 
-Performance-sensitive code is written in Cython, including packet codec, b58, hexify, etc...
+Note: you should be using a 64-bit system.  Although it should be
+possible to run most of the system in 32-bit mode, consider it an
+unsupported configuration, because of the memory requirements.
 
-The script engine is mostly done.  Needs some work on failing constraints like stack size, sig count, etc.
+Performance-sensitive code is written in Cython, including packet
+codec, b58, hexify, etc...
 
-The current plan is to have a pruning ledger in memory (with journalling-style checkpoints to disk).
-Without a ledger, this code is not a full forwarding node, and thus by default the 'relay' flag in
+The script engine is mostly done.  Needs some work on failing
+constraints like stack size, sig count, etc.
+
+The current plan is to have a pruning ledger in memory (with
+journalling-style checkpoints to disk).  Without a ledger, this code
+is not a full forwarding node, and thus by default the 'relay' flag in
 the outgoing version packet is set to False.
 
 See TODO.txt & ledger.py for details.
