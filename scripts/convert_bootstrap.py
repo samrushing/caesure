@@ -13,15 +13,33 @@
 
 import struct
 import sys
+import argparse
 
-path = sys.argv[1]
+W = sys.stderr.write
 
-f = open (path, 'r+')
-while 1:
-    pos = f.tell()
-    magic = f.read (4)
-    assert (magic == '\xf9\xbe\xb4\xd9')
-    size, = struct.unpack ('<I', f.read (4))
-    f.seek (pos)
-    f.write (struct.pack ('<Q', size))
-    f.seek (pos + 8 + size)
+def main (args):
+    f = open (args.file, 'r+')
+    n = 0
+    while 1:
+        n += 1
+        if n % 1000 == 0:
+            W ('[%d]' % (n,))
+        pos = f.tell()
+        magic_size = f.read (8)
+        magic = magic_size[:4]
+        size = magic_size[4:]
+        if magic == '':
+            break
+        else:
+            assert (magic == '\xf9\xbe\xb4\xd9')
+            size, = struct.unpack ('<I', size)
+            f.seek (pos)
+            f.write (struct.pack ('<Q', size))
+            f.seek (pos + 8 + size)
+    W ('...done.\n')
+        
+if __name__ == '__main__':
+    p = argparse.ArgumentParser (description="bootstrap.dat -> caesure in-place format converter.")
+    p.add_argument ('file', help="file in bootstrap.dat format")
+    args = p.parse_args()
+    main (args)
