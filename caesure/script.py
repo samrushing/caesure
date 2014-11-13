@@ -5,6 +5,7 @@ import struct
 from pprint import pprint as pp
 import sys
 
+from coro.asn1.ber import decode, SEQUENCE, INTEGER
 from caesure._script import *
 
 sha256 = hashlib.sha256
@@ -360,11 +361,16 @@ class machine:
 class VerifyError (Exception):
     pass
 
+class BadSignature (VerifyError):
+    pass
+
 # machine with placeholders for things we need to perform tx verification
 
 class verifying_machine (machine):
 
     debug = False
+    strict = True
+    low_s = False
 
     def __init__ (self, tx, index, KEY):
         machine.__init__ (self)
@@ -430,16 +436,50 @@ class verifying_machine (machine):
         s3 = unparse_script (s2)
         return self.check_one_sig (pub_key, sig, s3)
 
+    def strict_der (self, sig0, pub0):
+        return self.strict_sig (sig0) and self.strict_pub (pub0)
+
+    def strict_pub (self, pub0):
+        if pub0[0] not in '\x02\x03\x04':
+            return 0
+        elif pub0[0] == '\x04' and len(pub0) != 65:
+            return 0
+        elif len(pub0) != 33:
+            return 0
+        else:
+            return 1
+
+    def strict_sig (self, sig0):
+        sig1, size = decode (sig0)
+        # does BIP062 require "raise BadSignature"?
+        if size != len(sig0):
+            return 0
+        elif not (len(sig1) == 2 and type(sig1[0]) is long and type(sig1[1]) is long):
+            return 0
+        else:
+            [r, s] = sig1
+            if SEQUENCE (INTEGER (r), INTEGER (s)) != sig0:
+                return 0
+            elif self.low_s and not (1 <= s <= 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0):
+                return 0
+            elif not (1 <= r <= 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364140):
+                return 0
+            else:
+                return 1
+
     def check_one_sig (self, pub, sig, s):
         if not sig:
             # XXX check for canonical form here?
             return 0
         else:
             sig, hash_type = sig[:-1], ord(sig[-1])
-            #W ('hash_type=0x%x\n' % (hash_type,))
-            already_hashed, data = self.get_tx_for_hash (self.tx, self.index, s, hash_type)
-            #W ('data = %s\n' % (data.encode ("hex")))
-            return self.verify_sig (pub, sig, data, already_hashed)
+            if self.strict and not self.strict_der (sig, pub):
+                return 0
+            else:
+                #W ('hash_type=0x%x\n' % (hash_type,))
+                already_hashed, data = self.get_tx_for_hash (self.tx, self.index, s, hash_type)
+                #W ('data = %s\n' % (data.encode ("hex")))
+                return self.verify_sig (pub, sig, data, already_hashed)
 
     def check_multi_sig (self, s):
         npub = self.pop_int()
@@ -727,7 +767,8 @@ def do_abs (m):
     m.push_int (abs (m.pop_int()))
 def do_not (m):
     m.need (1)
-    if m.truth():
+    v = m.pop()
+    if is_true(v):
         m.push_int (0)
     else:
         m.push_int (1)
