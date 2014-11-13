@@ -54,56 +54,61 @@ def parse_test (s):
             raise ValueError ("i'm so conFUSEd")
     return ''.join (r)
 
-# XXX assume the flags affects this?
-#class test_machine (verifying_machine_p2sh):
-class test_machine (verifying_machine):
-
-    debug = False
-
-    def __init__ (self):
-        machine.__init__ (self)
-        self.index = 0
-        self.KEY = KEY
-
-    def eval_script (self, lock_script, unlock_script):
-        tx0 = TX()
-        tx0.inputs = [((ZERO_NAME, 4294967295), '\x00\x00', 4294967295)]
-        tx0.outputs = [(0, lock_script)]
-        name = tx0.get_hash()
-        tx1 = TX()
-        tx1.inputs = [((name, 0), unlock_script, 4294967295)]
-        tx1.outputs = [(0, '')]
-        self.tx = tx1
-        return verifying_machine.eval_script (self, lock_script, unlock_script)
-
 import sys
 W = sys.stderr.write
 
-def do_one (lock_script, unlock_script):
+def do_one (lock_script, unlock_script, flags):
     W (('-' *50)+'\n')
-    m = test_machine()
+
+    tx0 = TX()
+    tx0.inputs = [((ZERO_NAME, 4294967295), '\x00\x00', 4294967295)]
+    tx0.outputs = [(0, lock_script)]
+    name = tx0.get_hash()
+    tx1 = TX()
+    tx1.inputs = [((name, 0), unlock_script, 4294967295)]
+    tx1.outputs = [(0, '')]
+
+    if 'P2SH' in flags:
+        m = verifying_machine_p2sh (tx1, 0, KEY)
+    else:
+        m = verifying_machine (tx1, 0, KEY)
+    if 'STRICTENC' in flags:
+        m.strict = True
+    else:
+        m.strict = False
+
     m.eval_script (lock_script, unlock_script)
 
 def unit_tests():
     W ('%d valid tests...\n' % (len(valid),))
+    fails = []
     for i, v in enumerate (valid):
         v = [bytes(x) for x in v]
         if len(v) >= 2:
+            flags = v[2].split(',')
             unlock = parse_test (v[0])
             lock = parse_test (v[1])
             print i, v
             print pprint_script (parse_script (unlock))
             print pprint_script (parse_script (lock))
-            do_one (lock, unlock)
+            try:
+                do_one (lock, unlock, flags)
+            except:
+                W ('fail: %d\n' % (i,))
+                fails.append ((i, v))
+    if fails:
+        W ('%d failures:\n' % (len(fails)))
+        for i, fail in fails:
+            W ('  %d %r\n' % (i, fail))
     if False:
         W ('--- SHOULD FAIL ---\n')
         for v in invalid:
-            # XXX grok flags
             sig, pub, flags = v[:2]
+            flags = flags.split(',')
             if len(v)>2:
                 print v[2]
             try:
-                do_one (sig, pub)
+                do_one (sig, pub, flags)
             except:
                 print sys.exc_info()
             else:
@@ -132,7 +137,7 @@ if __name__ == '__main__':
             tests.append (valid[num])
         valid = tests
     if args.d:
-        test_machine.debug = True
+        verifying_machine.debug = True
         
     unit_tests()
     #pprint_unit_tests()
