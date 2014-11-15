@@ -138,7 +138,8 @@ class BaseConnection:
 
     def gen_packets (self):
         while 1:
-            data = self.stream.read_exact (24)
+            # XXX consider lowering this and using ping.
+            data = coro.with_timeout (1800, self.stream.read_exact, 24)
             if not data:
                 G.log ('closed', self.other_addr)
                 break
@@ -636,6 +637,8 @@ class AddressCache:
             self.cache = pickle.load (open (save_path, 'rb'))
             G.log ('address-cache', 'load', len(self.cache))
         except IOError:
+            pass
+        if not self.cache:
             self.seed()
 
     def __len__ (self):
