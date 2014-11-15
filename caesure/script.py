@@ -181,56 +181,6 @@ for name in dir(OPCODES):
         opcode_map_fwd[name] = val
         opcode_map_rev[val] = name
 
-def render_int (n):
-    # little-endian byte stream
-    if n < 0:
-        neg = True
-        n = -n
-    else:
-        neg = False
-    r = []
-    while n:
-        r.append (n & 0xff)
-        n >>= 8
-    if neg:
-        if r[-1] & 0x80:
-            r.append (0x80)
-        else:
-            r[-1] |= 0x80
-    elif r and (r[-1] & 0x80):
-        r.append (0)
-    return ''.join ([chr(x) for x in r])
-
-def unrender_int (s):
-    n = 0
-    ls = len(s)
-    neg = False
-    for i in range (ls - 1, -1, -1):
-        b = ord (s[i])
-        n <<= 8
-        if i == ls - 1 and b & 0x80:
-            neg = True
-            n |= b & 0x7f
-        else:
-            n |= b
-    if neg:
-        return -n
-    else:
-        return n
-
-# I can't tell for sure, but it really looks like the operator<<(vch) in script.h
-#  assumes little-endian?
-def make_push_str (s):
-    ls = len(s)
-    if ls < OP_PUSHDATA1:
-        return chr(ls) + s
-    elif ls < 0xff:
-        return chr(OP_PUSHDATA1) + chr(ls) + s
-    elif ls < 0xffff:
-        return chr(OP_PUSHDATA2) + struct.pack ("<H", ls) + s
-    else:
-        return chr(OP_PUSHDATA4) + struct.pack ("<L", ls) + s
-
 def make_push_int (n):
     if n == 0:
         return chr(OP_0)
@@ -238,15 +188,37 @@ def make_push_int (n):
         return chr(OP_1)
     elif n >= 2 and n <= 16:
         return chr(80 + n)
+    elif n == -1:
+        return chr(OP_1NEGATE)
     else:
         return make_push_str (render_int (n))
+
+# this will recreate IF/ELSE/END ops as well.
+def walk_script (s):
+    for insn in s:
+        if insn[0] == KIND_COND:
+            _, sense, sub0, elses = insn
+            if sense:
+                yield KIND_OP, OP_IF
+            else:
+                yield KIND_OP, OP_NOTIF
+            for x in walk_script (sub0):
+                yield x
+            for i in range (len (elses)):
+                for x in walk_script (elses[i]):
+                    yield x
+                if i != len(elses)-1:
+                    yield KIND_OP, OP_ELSE
+            yield KIND_OP, OP_ENDIF
+        else:
+            yield insn
 
 def pprint_script (p):
     r = []
     for insn in p:
         kind = insn[0]
         if kind == KIND_PUSH:
-            _, data = insn
+            _, data, push_kind = insn
             if not data:
                 r.append ('')
             else:
@@ -290,8 +262,16 @@ def is_true (v):
     # check against the two forms of ZERO
     return v not in ('', '\x80')
 
-lo32 = -(2 ** 31)
-hi32 = (2 ** 31) - 1
+# "Numeric opcodes (OP_1ADD, etc) are restricted to operating on 4-byte integers.
+#  The semantics are subtle, though: operands must be in the range [-2^31 +1...2^31 -1],
+#  but results may overflow (and are valid as long as they are not used in a subsequent
+#  numeric operation)."
+
+# NOTE: this is NOT the range of a signed 32-bit integer.
+#   One value (-0x80000000) has been lost on the low end.
+
+lo32 = -(2 ** 31) + 1
+hi32 = +(2 ** 31) - 1
 
 def check_int (n):
     if not (lo32 <= n <= hi32):
@@ -299,12 +279,21 @@ def check_int (n):
     return n
 
 class machine:
+
+    debug = False
+    strict = True
+    low_s = False
+    minimal = False
+
     def __init__ (self):
         self.stack = []
         self.altstack = []
 
     def clear_alt (self):
         self.altstack = []
+
+    def clear_stack (self):
+        self.stack = []
 
     def top (self):
         return self.stack[-1]
@@ -316,7 +305,7 @@ class machine:
         self.stack.append (item)
 
     def push_int (self, n):
-        self.stack.append (render_int (n))
+        self.push (render_int (n))
 
     # the wiki says that numeric ops are limited to 32-bit integers,
     #  however at least one of the test cases (which try to enforce this)
@@ -327,9 +316,14 @@ class machine:
     #   the output can overflow... a script quirk.
 
     def pop_int (self, check=True):
-        n = unrender_int (self.pop())
+        # XXX bip62 requires that integer ops be represented minimally.
+        item = self.pop()
+        n = unrender_int (item)
         if check:
             check_int (n)
+        if self.minimal:
+            check_minimal_int (item, n)
+        # XXX check_minint?
         return n
 
     def push_alt (self):
@@ -358,19 +352,15 @@ class machine:
     def truth (self):
         return is_true (self.top())
 
+# XXX think carefully about how these may relate to _script.pyx:ScriptErrors.
 class VerifyError (Exception):
     pass
-
 class BadSignature (VerifyError):
     pass
 
 # machine with placeholders for things we need to perform tx verification
 
 class verifying_machine (machine):
-
-    debug = False
-    strict = True
-    low_s = False
 
     def __init__ (self, tx, index, KEY):
         machine.__init__ (self)
@@ -433,11 +423,8 @@ class verifying_machine (machine):
         s0 = parse_script (s)
         s1 = remove_codeseps (s0)
         s2 = remove_sigs (s1, [sig])
-        s3 = unparse_script (s2)
+        s3 = unparse_script (s2, False)
         return self.check_one_sig (pub_key, sig, s3)
-
-    def strict_der (self, sig0, pub0):
-        return self.strict_sig (sig0) and self.strict_pub (pub0)
 
     def strict_pub (self, pub0):
         if pub0[0] not in '\x02\x03\x04':
@@ -467,6 +454,9 @@ class verifying_machine (machine):
             else:
                 return 1
 
+    def strict_der (self, sig, pub):
+        return self.strict_sig (sig) and self.strict_pub (pub)
+
     def check_one_sig (self, pub, sig, s):
         if not sig:
             # XXX check for canonical form here?
@@ -483,9 +473,13 @@ class verifying_machine (machine):
 
     def check_multi_sig (self, s):
         npub = self.pop_int()
+        if npub < 0 or npub > 20:
+            raise BadScript (s)
         #print 'npub=', npub
         pubs = [self.pop() for x in range (npub)]
         nsig = self.pop_int()
+        if nsig < 0 or nsig > npub:
+            raise BadScript (s)
         #print 'nsig=', nsig
         sigs = [self.pop() for x in range (nsig)]
 
@@ -499,7 +493,7 @@ class verifying_machine (machine):
         s0 = parse_script (s)
         s1 = remove_codeseps (s0)
         s2 = remove_sigs (s1, sigs)  # rare?
-        s3 = unparse_script (s2)
+        s3 = unparse_script (s2, False)
 
         for sig in sigs:
             nmatch = 0
@@ -514,17 +508,57 @@ class verifying_machine (machine):
                 return 0
         return 1
 
-    def eval_script (self, lock_script, unlock_script):
-        lock_script = parse_script (lock_script)
-        unlock_script = parse_script (unlock_script)
-        self._eval_script (unlock_script)
+    def check_script0 (self, s):
+        # checks on an unparsed script
+        if len(s) > 10000:
+            raise BadScript (s)
+
+    # where should this magic number come from?
+    push_max = 520
+
+    def check_script1 (self, s):
+        # make various checks on a parsed script
+        op_count = 0
+        last = None, None
+        for insn in walk_script (s):
+            if insn[0] == KIND_OP:
+                if insn[1] in disabled:
+                    raise BadScript (insn)
+                if insn[1] != OP_RESERVED:
+                    op_count += 1
+            elif insn[0] == KIND_PUSH:
+                #op_count += 1
+                if len(insn[1]) > self.push_max:
+                    raise BadScript (insn)
+            elif insn[0] == KIND_CHECK:
+                op_count += 1
+                if insn[1] in (OP_CHECKMULTISIGVERIFY, OP_CHECKMULTISIG):
+                    if last[0] == KIND_PUSH:
+                        n = unrender_int (last[1])
+                        if 0 <= n <= 20:
+                            op_count += n
+                        else:
+                            op_count += 20
+                    else:
+                        op_count += 20
+            if op_count > 201:
+                raise BadScript (insn)
+            last = insn
+
+    def eval_script (self, lock_script0, unlock_script0):
+        self.check_script0 (lock_script0)
+        self.check_script0 (unlock_script0)
+        lock_script1 = parse_script (lock_script0)
+        unlock_script1 = parse_script (unlock_script0)
+        self._eval_script (unlock_script1)
         self.clear_alt()
-        self._eval_script (lock_script)
+        self._eval_script (lock_script1)
         self.need (1)
         if not self.truth():
             raise VerifyError
 
     def _eval_script (self, s):
+        self.check_script1 (s)
         for insn in s:
             if self.debug:
                 W ('---------------\n')
@@ -532,7 +566,9 @@ class verifying_machine (machine):
                 pinsn (insn)
             kind = insn[0]
             if kind == KIND_PUSH:
-                _, data = insn
+                _, data, push_kind = insn
+                if self.minimal:
+                    check_minimal_push (data, push_kind)
                 self.push (data)
             elif kind == KIND_OP:
                 _, op = insn
@@ -568,22 +604,32 @@ class verifying_machine (machine):
                 pass
             else:
                 raise ValueError ("unknown kind: %r" % (kind,))
+            if len(self.stack) + len(self.altstack) > 1000:
+                raise StackOverflow
         if self.debug:
             W ('---------------\n')
             self.dump()
 
 class verifying_machine_p2sh (verifying_machine):
 
+    def check_p2sh (self, lock_script, unlock_script):
+        for insn in walk_script (unlock_script):
+            if insn[0] is not KIND_PUSH:
+                raise BadScript (insn)
+
     def eval_script (self, lock_script, unlock_script):
         # special treatment here, the top item on the stack is a *script*,
         #   which must match the hash in <s>.  We then evaluate that script.
         #   there are additional requirements on the unlock script that will
         #   need to be checked...
+        self.check_script0 (lock_script)
+        self.check_script0 (unlock_script)
         lock_script = parse_script (lock_script)
         unlock_script = parse_script (unlock_script)
         #W ('lock_script = %r\n' % (lock_script))
         #W ('unlock_script = %r\n' % (unlock_script))
         if is_p2sh (lock_script):
+            self.check_p2sh (lock_script, unlock_script)
             if unlock_script[-1][0] != KIND_PUSH:
                 #W ('p2sh: last item not a push\n')
                 raise ScriptFailure
@@ -601,8 +647,10 @@ class verifying_machine_p2sh (verifying_machine):
         else:
             self._eval_script (unlock_script)
             self.clear_alt()
-            return self._eval_script (lock_script)
-
+            self._eval_script (lock_script)
+            self.need (1)
+            if not self.truth():
+                raise VerifyError
 
 def remove_sigs (p, sigs):
     "remove any of <sigs> from <p>"
@@ -767,11 +815,11 @@ def do_abs (m):
     m.push_int (abs (m.pop_int()))
 def do_not (m):
     m.need (1)
-    v = m.pop()
-    if is_true(v):
-        m.push_int (0)
-    else:
+    v = m.pop_int()
+    if v == 0:
         m.push_int (1)
+    else:
+        m.push_int (0)
 def do_0notequal (m):
     if m.pop_int() == 0:
         m.push_int (0)
@@ -956,7 +1004,8 @@ for name in g.keys():
     if name.startswith ('do_'):
         opname = ('op_%s' % (name[3:])).upper()
         code = opcode_map_fwd[opname]
-        op_funs[code] = g[name]
+        if code not in disabled:
+            op_funs[code] = g[name]
 
 def get_op_fun (opcode):
     try:
