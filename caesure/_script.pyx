@@ -1,4 +1,4 @@
-# -*- Mode: Python -*-
+# -*- Mode: Cython; indent-tabs-mode: nil -*-
 
 import hashlib
 import struct
@@ -74,6 +74,11 @@ cpdef int64_t unrender_int (bytes s):
     else:
         return n
         
+cpdef check_minimal_int (bytes s0, int64_t n):
+    cdef bytes s1 = render_int (n)
+    if s0 != s1:
+        raise NonMinimalInt (s0)
+
 cpdef bytes pack_u16 (uint16_t n):
     return chr(n & 0xff) + chr ((n>>8) &0xff)
 
@@ -89,14 +94,19 @@ cdef list chars = [0]*256
 for i in range (256):
     chars[i] = chr(i)
 
-# I can't tell for sure, but it really looks like the operator<<(vch) in script.h
-#  assumes little-endian?
-
-# wow, cython makes this really hard...
 cpdef bytes make_push_str (bytes s):
+    # make a minimal (bip62) push.
     cdef int ls = len(s)
-    if ls < OP_PUSHDATA1:
-        return chars[ls] + s
+    if ls == 0:
+        return chars[OP_0]
+    elif ls == 1:
+        d = ord(s[0])
+        if 0x01 <= d <= 0x10:
+            return chars[OP_1 + (d-1)]
+        elif d == 0x81:
+            return chars[OP_1NEGATE]
+        else:
+            return chars[ls] + s
     elif ls < 0xff:
         # PUSHDATA1
         return b'\x4c' + chars[ls] + s
@@ -119,17 +129,30 @@ class StackUnderflow (ScriptError):
     pass
 class AltStackUnderflow (ScriptError):
     pass
+class StackOverflow (ScriptError):
+    pass
 class DisabledError (ScriptError):
     pass
 class BadNumber (ScriptError):
     pass
+class NonMinimalPush (ScriptError):
+    pass
+class NonMinimalInt (ScriptError):
+    pass
 
 cdef enum OP_KIND:
-    KIND_PUSH = 0,
-    KIND_COND = 1,
-    KIND_OP = 2,
+    KIND_PUSH  = 0,
+    KIND_COND  = 1,
+    KIND_OP    = 2,
     KIND_CHECK = 3,
-    KIND_SEP = 4,
+    KIND_SEP   = 4,
+
+cdef enum PUSH_KIND:
+    PUSH_OP = 0 # OP_1NEGATE, OP_0, OP_1 .. OP_16
+    PUSH_N  = 1 # <5> "abcde"
+    PUSH_1  = 2 # "a"
+    PUSH_2  = 3 # 0x1234 ....
+    PUSH_4  = 4 # 0xdeadbeef "never used..."
 
 cdef uint8_t disabled[255]
 disabled_set = {
@@ -193,22 +216,32 @@ cdef class script_parser:
         cdef uint32_t code_sep = 0
         cdef uint8_t insn
         cdef uint8_t end = 0
+        cdef bytes data
         while self.pos < self.length:
             insn = self.next()
-            if insn >= 0 and insn <= 75:
-                code.append ((KIND_PUSH, self.get_str (insn)))
+            if insn == 0:
+                code.append ((KIND_PUSH, b'', PUSH_OP))
+            elif insn == OP_1NEGATE:
+                code.append ((KIND_PUSH, b'\x81', PUSH_OP))
+            elif OP_1 <= insn <= OP_16:
+                code.append ((KIND_PUSH, chars[(insn-OP_1)+1], PUSH_OP))
+            elif insn >= 1 and insn <= 0x4b:
+                code.append ((KIND_PUSH, self.get_str (insn), PUSH_N))
             elif insn == OP_PUSHDATA1:
                 size = self.next()
-                code.append ((KIND_PUSH, self.get_str (size)))
+                data = self.get_str (size)
+                code.append ((KIND_PUSH, data, PUSH_1))
             elif insn == OP_PUSHDATA2:
-                code.append ((KIND_PUSH, self.get_str (self.get_int (2))))
+                data = self.get_str (self.get_int (2))
+                code.append ((KIND_PUSH, data, PUSH_2))
             elif insn == OP_PUSHDATA4:
-                code.append ((KIND_PUSH, self.get_str (self.get_int (4))))
+                data = self.get_str (self.get_int (4))
+                code.append ((KIND_PUSH, data, PUSH_4))
             elif insn in (OP_IF, OP_NOTIF):
                 sub0 = self.parse (&end)
                 sense = insn == OP_IF
                 elses = []
-                while end == OP_ELSE:
+                while end == OP_ELSE and self.pos < self.length:
                     sub1 = self.parse (&end)
                     elses.append (sub1)
                 if end != OP_ENDIF:
@@ -238,7 +271,7 @@ def is_p2sh (list s):
         len(s) == 3
         and s[0] == (KIND_OP, OP_HASH160)
         and s[2] == (KIND_OP, OP_EQUAL)
-        and len(s[1]) == 2
+        and len(s[1]) == 3
         and s[1][0] == KIND_PUSH
         and len(s[1][1]) == 20
         )
@@ -250,13 +283,102 @@ def parse_script (s):
         raise BadScript
     return code
 
-cpdef bytes unparse_script (list p):
+# my kingdom for pattern matching!
+# most of this complexity is to accommodate bip62
+
+cpdef bint is_minimal (bytes data, int push_kind):
+    cdef uint8_t d
+    cdef int ld = len(data)
+    if ld == 0:
+        return push_kind == PUSH_OP
+    elif ld == 1:
+        d = ord(data[0])
+        if d == 0x00:
+            return push_kind == PUSH_OP
+        elif 0x01 <= d <= 0x10:
+            return push_kind == PUSH_OP
+        elif d == 0x81:
+            return push_kind == PUSH_OP
+        else:
+            return push_kind == PUSH_N
+    elif ld <= 75:
+        return push_kind == PUSH_N
+    elif ld <= 255:
+        return push_kind == PUSH_1
+    elif ld <= 520:
+        return push_kind == PUSH_2
+    else:
+        return 1
+
+cpdef check_minimal_push (bytes data, int push_kind):
+    if not is_minimal (data, push_kind):
+        raise NonMinimalPush ((data, push_kind))
+
+cpdef unparse_push (list result, int push_kind, bytes data, bint minimal):
+    cdef uint8_t op
+    cdef int ld = len(data)
+    cdef uint8_t d
+    if minimal:
+        # unparse to a minimal (bip62) push.
+        # note that this clause does not examine <push_kind>.
+        if ld == 0:
+            result.append (chars[OP_0])
+        elif ld == 1:
+            d = ord(data[0])
+            if 0x01 <= d <= 0x10:
+                result.append (chars[OP_1 + (d-1)])
+            elif d == 0x81:
+                result.append (chars[OP_1NEGATE])
+            else:
+                result.append (make_push_str (data))
+        else:
+            result.append (make_push_str (data))
+    else:
+        # unparse to a (possibly non-minimal) push.
+        if push_kind == PUSH_OP:
+            if ld == 0:
+                result.append (chars[OP_0])
+            elif ld == 1:
+                d = ord(data[0])
+                if 0x01 <= d <= 0x10:
+                    result.append (chars[OP_1 + (d-1)])
+                elif d == 0x81:
+                    result.append (chars[OP_1NEGATE])
+                else:
+                    raise ValueError ("bad PUSH_OP data")
+            else:
+                raise ValueError ("bad PUSH_OP data")
+        elif push_kind == PUSH_N:
+            if 1 <= ld <= 0x4b:
+                result.extend ([chars[ld], data])
+            else:
+                raise ValueError ("bad PUSH_N data")
+        elif push_kind == PUSH_1:
+            if ld <= 1:
+                result.extend ([chars[OP_PUSHDATA1], chars[ld], data])
+            else:
+                raise ValueError ("bad PUSH_1 data")
+        elif push_kind == PUSH_2:
+            if ld < 0xffff:
+                result.extend ([chars[OP_PUSHDATA2], pack_u16 (ld), data])
+            else:
+                raise ValueError ("bad PUSH_2 data")
+        elif push_kind == PUSH_4:
+            raise ValueError ("illegal PUSH_4")
+        else:
+            raise ValueError ("bad push_kind")
+
+cpdef bytes unparse_script (list p, bint minimal):
     cdef list r = []
     cdef uint8_t op
+    cdef bytes data
+    cdef uint8_t d
+    cdef int push_kind
     for insn in p:
         kind = insn[0]
         if kind == KIND_PUSH:
-            r.append (make_push_str (insn[1]))
+            _, data, push_kind = insn
+            unparse_push (r, push_kind, data, minimal)
         elif kind == KIND_COND:
             _, sense, sub0, elses = insn
             if sense:
@@ -264,10 +386,10 @@ cpdef bytes unparse_script (list p):
             else:
                 op = OP_NOTIF
             r.append (chars[op])
-            r.append (unparse_script (sub0))
+            r.append (unparse_script (sub0, minimal))
             for sub1 in elses:
                 r.append (chars[OP_ELSE])
-                r.append (unparse_script (sub1))
+                r.append (unparse_script (sub1, minimal))
             r.append (chars[OP_ENDIF])
         elif kind == KIND_CHECK:
             op = insn[1]
