@@ -1,6 +1,6 @@
 # -*- Mode: Python -*-
 
-# parse the test cases from bitcoin-qt
+# parse the test cases from bitcoin-core
 
 import os
 import json
@@ -72,11 +72,8 @@ def do_one (lock_script, unlock_script, flags):
         m = verifying_machine_p2sh (tx1, 0, KEY)
     else:
         m = verifying_machine (tx1, 0, KEY)
-    if 'STRICTENC' in flags:
-        m.strict = True
-    else:
-        m.strict = False
-
+    m.strict = 'STRICTENC' in flags
+    m.minimal = 'MINIMALDATA' in flags
     m.eval_script (lock_script, unlock_script)
 
 def unit_tests():
@@ -93,27 +90,27 @@ def unit_tests():
             print pprint_script (parse_script (lock))
             try:
                 do_one (lock, unlock, flags)
+            except Exception as e:
+                fails.append ((i, 'valid', v, e))
+    W ('%d invalid tests...\n' % (len(invalid),))
+    for i, v in enumerate (invalid):
+        v = [bytes(x) for x in v]
+        if len(v) >= 2:
+            flags = v[2].split(',')
+            try:
+                unlock = parse_test (v[0])
+                lock = parse_test (v[1])
+                print i, v
+                print pprint_script (parse_script (unlock))
+                print pprint_script (parse_script (lock))
+                do_one (lock, unlock, flags)
+                fails.append ((i, 'invalid', v, None))
             except:
-                W ('fail: %d\n' % (i,))
-                fails.append ((i, v))
+                pass
     if fails:
         W ('%d failures:\n' % (len(fails)))
-        for i, fail in fails:
-            W ('  %d %r\n' % (i, fail))
-    if False:
-        W ('--- SHOULD FAIL ---\n')
-        for v in invalid:
-            sig, pub, flags = v[:2]
-            flags = flags.split(',')
-            if len(v)>2:
-                print v[2]
-            try:
-                do_one (sig, pub, flags)
-            except:
-                print sys.exc_info()
-            else:
-                W ('DID NOT FAIL!\n')
-                raw_input()
+        for i, kind, fail, why in fails:
+            W ('  %d %s %r, %r\n' % (i, kind, fail, why))
 
 def pprint_unit_tests():
     for v in valid:
@@ -127,15 +124,25 @@ def pprint_unit_tests():
 if __name__ == '__main__':
     import argparse
     p = argparse.ArgumentParser (description='run bitcoin-core unit script tests')
-    p.add_argument ('-n', type=int, action='append', help='run a specific test by number')
+    p.add_argument ('-v', type=int, action='append', help='run a specific valid test by number')
+    p.add_argument ('-i', type=int, action='append', help='run a specific invalid test by number')
     p.add_argument ('-d', action='store_true', help='debug')
     args = p.parse_args()
 
-    if args.n is not None:
+    if args.v is not None:
         tests = []
-        for num in args.n:
+        for num in args.v:
             tests.append (valid[num])
         valid = tests
+        invalid = []
+
+    if args.i is not None:
+        tests = []
+        for num in args.i:
+            tests.append (invalid[num])
+        invalid = tests
+        valid = []
+
     if args.d:
         verifying_machine.debug = True
         
