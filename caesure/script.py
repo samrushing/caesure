@@ -280,10 +280,12 @@ def check_int (n):
 
 class machine:
 
+    # XXX most of these want to live in verifying_machine, not here.
     debug = False
     strict = True
     low_s = False
     minimal = False
+    nulldummy = False
 
     def __init__ (self):
         self.stack = []
@@ -475,16 +477,16 @@ class verifying_machine (machine):
         npub = self.pop_int()
         if npub < 0 or npub > 20:
             raise BadScript (s)
-        #print 'npub=', npub
         pubs = [self.pop() for x in range (npub)]
         nsig = self.pop_int()
         if nsig < 0 or nsig > npub:
             raise BadScript (s)
-        #print 'nsig=', nsig
         sigs = [self.pop() for x in range (nsig)]
 
         # forever broken?
-        self.pop()
+        dummy = self.pop()
+        if self.nulldummy and dummy != '':
+            raise NonNullDummy (s)
 
         pubs = pubs[::-1]
         sigs = sigs[::-1]
@@ -498,13 +500,11 @@ class verifying_machine (machine):
         for sig in sigs:
             nmatch = 0
             matched = False
-            #print 'checking sig...'
             for pub in pubs:
                 if self.check_one_sig (pub, sig, s3):
                     matched = True
                     break
             if not matched:
-                #print 'sig matched no pubs'
                 return 0
         return 1
 
@@ -553,9 +553,7 @@ class verifying_machine (machine):
         self._eval_script (unlock_script1)
         self.clear_alt()
         self._eval_script (lock_script1)
-        self.need (1)
-        if not self.truth():
-            raise VerifyError
+        do_verify (self)
 
     def _eval_script (self, s):
         self.check_script1 (s)
@@ -643,14 +641,15 @@ class verifying_machine_p2sh (verifying_machine):
                 #W ('unlock_script=%s\n' % (pprint_script (unlock_script),))
                 if self.debug:
                     W ('p2sh unlock_script: %s\n' % (pprint_script (unlock_script),))
-                return self._eval_script (unlock_script)
+                self._eval_script (unlock_script)
+                do_verify (self)
         else:
+            # XXX should just call the parent class version.
             self._eval_script (unlock_script)
             self.clear_alt()
             self._eval_script (lock_script)
             self.need (1)
-            if not self.truth():
-                raise VerifyError
+            do_verify (self)
 
 def remove_sigs (p, sigs):
     "remove any of <sigs> from <p>"

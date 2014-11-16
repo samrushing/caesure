@@ -139,6 +139,8 @@ class NonMinimalPush (ScriptError):
     pass
 class NonMinimalInt (ScriptError):
     pass
+class NonNullDummy (ScriptError):
+    pass
 
 cdef enum OP_KIND:
     KIND_PUSH  = 0,

@@ -58,7 +58,7 @@ import sys
 W = sys.stderr.write
 
 def do_one (lock_script, unlock_script, flags):
-    W (('-' *50)+'\n')
+    #W (('-' *50)+'\n')
 
     tx0 = TX()
     tx0.inputs = [((ZERO_NAME, 4294967295), '\x00\x00', 4294967295)]
@@ -74,6 +74,7 @@ def do_one (lock_script, unlock_script, flags):
         m = verifying_machine (tx1, 0, KEY)
     m.strict = 'STRICTENC' in flags
     m.minimal = 'MINIMALDATA' in flags
+    m.nulldummy = 'NULLDUMMY' in flags
     m.eval_script (lock_script, unlock_script)
 
 def unit_tests():
@@ -85,9 +86,9 @@ def unit_tests():
             flags = v[2].split(',')
             unlock = parse_test (v[0])
             lock = parse_test (v[1])
-            print i, v
-            print pprint_script (parse_script (unlock))
-            print pprint_script (parse_script (lock))
+            #print i, v
+            #print pprint_script (parse_script (unlock))
+            #print pprint_script (parse_script (lock))
             try:
                 do_one (lock, unlock, flags)
             except Exception as e:
@@ -100,9 +101,9 @@ def unit_tests():
             try:
                 unlock = parse_test (v[0])
                 lock = parse_test (v[1])
-                print i, v
-                print pprint_script (parse_script (unlock))
-                print pprint_script (parse_script (lock))
+                #print i, v
+                #print pprint_script (parse_script (unlock))
+                #print pprint_script (parse_script (lock))
                 do_one (lock, unlock, flags)
                 fails.append ((i, 'invalid', v, None))
             except:
