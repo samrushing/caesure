@@ -572,10 +572,12 @@ class verifying_machine (machine):
                 raise BadScript (insn)
 
     def eval_script (self, unlock_script0, lock_script0):
-        self.check_script0 (lock_script0)
         self.check_script0 (unlock_script0)
-        lock_script1 = parse_script (lock_script0)
+        self.check_script0 (lock_script0)
         unlock_script1 = parse_script (unlock_script0)
+        lock_script1 = parse_script (lock_script0)
+        if self.sigpushonly:
+            self.check_sigpushonly (unlock_script1)
         self._eval_script (unlock_script1) # aka scriptSig
         self.clear_alt()
         self._eval_script (lock_script1)   # aka scriptPubKey
