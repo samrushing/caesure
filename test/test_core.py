@@ -72,9 +72,11 @@ def do_one (lock_script, unlock_script, flags):
         m = verifying_machine_p2sh (tx1, 0, KEY)
     else:
         m = verifying_machine (tx1, 0, KEY)
-    m.strict = 'STRICTENC' in flags
+    m.strictenc = 'STRICTENC' in flags
     m.minimal = 'MINIMALDATA' in flags
     m.nulldummy = 'NULLDUMMY' in flags
+    m.dersig = 'DERSIG' in flags
+    m.low_s = 'LOW_S' in flags
     m.eval_script (lock_script, unlock_script)
 
 def unit_tests():
