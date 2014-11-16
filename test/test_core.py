@@ -57,7 +57,7 @@ def parse_test (s):
 import sys
 W = sys.stderr.write
 
-def do_one (lock_script, unlock_script, flags):
+def do_one (unlock_script, lock_script, flags):
     #W (('-' *50)+'\n')
 
     tx0 = TX()
@@ -77,7 +77,8 @@ def do_one (lock_script, unlock_script, flags):
     m.nulldummy = 'NULLDUMMY' in flags
     m.dersig = 'DERSIG' in flags
     m.low_s = 'LOW_S' in flags
-    m.eval_script (lock_script, unlock_script)
+    m.sigpushonly = 'SIGPUSHONLY' in flags
+    m.eval_script (unlock_script, lock_script)
 
 def unit_tests():
     W ('%d valid tests...\n' % (len(valid),))
@@ -92,7 +93,7 @@ def unit_tests():
             #print pprint_script (parse_script (unlock))
             #print pprint_script (parse_script (lock))
             try:
-                do_one (lock, unlock, flags)
+                do_one (unlock, lock, flags)
             except Exception as e:
                 fails.append ((i, 'valid', v, e))
     W ('%d invalid tests...\n' % (len(invalid),))
@@ -106,7 +107,7 @@ def unit_tests():
                 #print i, v
                 #print pprint_script (parse_script (unlock))
                 #print pprint_script (parse_script (lock))
-                do_one (lock, unlock, flags)
+                do_one (unlock, lock, flags)
                 fails.append ((i, 'invalid', v, None))
             except:
                 pass
