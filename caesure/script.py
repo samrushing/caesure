@@ -282,10 +282,11 @@ class machine:
 
     # XXX most of these want to live in verifying_machine, not here.
     debug = False
-    strict = True
+    strictenc = False
     low_s = False
     minimal = False
     nulldummy = False
+    dersig = False
 
     def __init__ (self):
         self.stack = []
@@ -428,6 +429,14 @@ class verifying_machine (machine):
         s3 = unparse_script (s2, False)
         return self.check_one_sig (pub_key, sig, s3)
 
+    valid_hashtypes = {
+        0x01, 0x02, 0x03,
+        0x81, 0x82, 0x83
+        }
+
+    def strict_hashtype (self, hashtype):
+        return hashtype in self.valid_hashtypes
+
     def strict_pub (self, pub0):
         if pub0[0] not in '\x02\x03\x04':
             return 0
@@ -456,8 +465,13 @@ class verifying_machine (machine):
             else:
                 return 1
 
-    def strict_der (self, sig, pub):
-        return self.strict_sig (sig) and self.strict_pub (pub)
+    def check_der (self, sig, pub, hashtype):
+        if self.dersig:
+            return self.strict_sig (sig)
+        elif self.strictenc:
+            return self.strict_sig (sig) and self.strict_hashtype (hashtype) and self.strict_pub (pub)
+        else:
+            return 1
 
     def check_one_sig (self, pub, sig, s):
         if not sig:
@@ -465,7 +479,7 @@ class verifying_machine (machine):
             return 0
         else:
             sig, hash_type = sig[:-1], ord(sig[-1])
-            if self.strict and not self.strict_der (sig, pub):
+            if not self.check_der (sig, pub, hash_type):
                 return 0
             else:
                 #W ('hash_type=0x%x\n' % (hash_type,))
@@ -501,6 +515,8 @@ class verifying_machine (machine):
             nmatch = 0
             matched = False
             for pub in pubs:
+                if self.strictenc and not self.strict_pub (pub):
+                    continue
                 if self.check_one_sig (pub, sig, s3):
                     matched = True
                     break
