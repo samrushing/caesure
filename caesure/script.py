@@ -280,13 +280,7 @@ def check_int (n):
 
 class machine:
 
-    # XXX most of these want to live in verifying_machine, not here.
     debug = False
-    strictenc = False
-    low_s = False
-    minimal = False
-    nulldummy = False
-    dersig = False
 
     def __init__ (self):
         self.stack = []
@@ -310,23 +304,10 @@ class machine:
     def push_int (self, n):
         self.push (render_int (n))
 
-    # the wiki says that numeric ops are limited to 32-bit integers,
-    #  however at least one of the test cases (which try to enforce this)
-    #  seem to violate this:
-    # ["2147483647 DUP ADD", "4294967294 EQUAL", ">32 bit EQUAL is valid"],
-    # by adding INT32_MAX to itself we overflow a signed 32-bit int.
-    # NOTE: according to Gavin Andresen, only the input operands have this limitation,
-    #   the output can overflow... a script quirk.
-
-    def pop_int (self, check=True):
-        # XXX bip62 requires that integer ops be represented minimally.
+    def pop_int (self):
         item = self.pop()
         n = unrender_int (item)
-        if check:
-            check_int (n)
-        if self.minimal:
-            check_minimal_int (item, n)
-        # XXX check_minint?
+        check_int (n)
         return n
 
     def push_alt (self):
@@ -361,15 +342,35 @@ class VerifyError (Exception):
 class BadSignature (VerifyError):
     pass
 
+# Note: I have tried to replace scriptPubKey & scriptSig with lock_script & unlock_script respectively.
+#  IMHO this is much less confusing, and is in line with the language used in Andreas' book.
+#  [I previously used 'redeem' for 'unlock'].
+
 # machine with placeholders for things we need to perform tx verification
 
 class verifying_machine (machine):
+
+    # various verification-level flags. mostly bip62.
+    strictenc   = False
+    low_s       = False
+    minimal     = False
+    nulldummy   = False
+    dersig      = False
+    sigpushonly = False
 
     def __init__ (self, tx, index, KEY):
         machine.__init__ (self)
         self.tx = tx
         self.index = index
         self.KEY = KEY
+
+    def pop_int (self):
+        # XXX bip62 requires that integer ops be represented minimally.
+        item = self.top()
+        n = machine.pop_int (self)
+        if self.minimal:
+            check_minimal_int (item, n)
+        return n
 
     def verify_sig (self, pub_key, sig, data, already):
         k = self.KEY()
@@ -434,8 +435,9 @@ class verifying_machine (machine):
         0x81, 0x82, 0x83
         }
 
-    def strict_hashtype (self, hashtype):
-        return hashtype in self.valid_hashtypes
+    def check_hashtype (self, hashtype):
+        if hashtype not in self.valid_hashtypes:
+            raise BadHashType (hashtype)
 
     def strict_pub (self, pub0):
         if pub0[0] not in '\x02\x03\x04':
@@ -447,29 +449,31 @@ class verifying_machine (machine):
         else:
             return 1
 
-    def strict_sig (self, sig0):
+    def check_pub (self, pub):
+        if not self.strict_pub (pub):
+            raise BadDER (pub)
+
+    def check_dersig (self, sig0):
         sig1, size = decode (sig0)
-        # does BIP062 require "raise BadSignature"?
         if size != len(sig0):
-            return 0
+            raise BadDER (sig0)
         elif not (len(sig1) == 2 and type(sig1[0]) is long and type(sig1[1]) is long):
-            return 0
+            raise BadDER (sig0)
         else:
             [r, s] = sig1
             if SEQUENCE (INTEGER (r), INTEGER (s)) != sig0:
-                return 0
+                raise BadDER (sig0)
             elif self.low_s and not (1 <= s <= 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0):
-                return 0
+                raise BadDER (sig0)
             elif not (1 <= r <= 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364140):
-                return 0
-            else:
-                return 1
+                raise BadDER (sig0)
 
     def check_der (self, sig, pub, hashtype):
-        if self.dersig:
-            return self.strict_sig (sig)
-        elif self.strictenc:
-            return self.strict_sig (sig) and self.strict_hashtype (hashtype) and self.strict_pub (pub)
+        if self.dersig or self.strictenc:
+            self.check_dersig (sig)
+        if self.strictenc:
+            self.check_hashtype (hashtype)
+            return self.strict_pub (pub)
         else:
             return 1
 
@@ -479,6 +483,7 @@ class verifying_machine (machine):
             return 0
         else:
             sig, hash_type = sig[:-1], ord(sig[-1])
+            # XXX I think these may *all* be check_xxx, not strict_xxx (i.e., they raise an error).
             if not self.check_der (sig, pub, hash_type):
                 return 0
             else:
@@ -561,14 +566,19 @@ class verifying_machine (machine):
                 raise BadScript (insn)
             last = insn
 
-    def eval_script (self, lock_script0, unlock_script0):
+    def check_sigpushonly (self, sig):
+        for insn in sig:
+            if insn[0] != KIND_PUSH:
+                raise BadScript (insn)
+
+    def eval_script (self, unlock_script0, lock_script0):
         self.check_script0 (lock_script0)
         self.check_script0 (unlock_script0)
         lock_script1 = parse_script (lock_script0)
         unlock_script1 = parse_script (unlock_script0)
-        self._eval_script (unlock_script1)
+        self._eval_script (unlock_script1) # aka scriptSig
         self.clear_alt()
-        self._eval_script (lock_script1)
+        self._eval_script (lock_script1)   # aka scriptPubKey
         do_verify (self)
 
     def _eval_script (self, s):
@@ -631,7 +641,7 @@ class verifying_machine_p2sh (verifying_machine):
             if insn[0] is not KIND_PUSH:
                 raise BadScript (insn)
 
-    def eval_script (self, lock_script, unlock_script):
+    def eval_script (self, unlock_script, lock_script):
         # special treatment here, the top item on the stack is a *script*,
         #   which must match the hash in <s>.  We then evaluate that script.
         #   there are additional requirements on the unlock script that will
