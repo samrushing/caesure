@@ -158,7 +158,7 @@ class TX (caesure.proto.TX):
             m = verifying_machine_p2sh (self, index, KEY)
         else:
             m = verifying_machine (self, index, KEY)
-        m.eval_script (lock_script, unlock_script)
+        m.eval_script (unlock_script, lock_script)
 
 class BadBlock (Exception):
     pass
