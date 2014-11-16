@@ -135,11 +135,17 @@ class DisabledError (ScriptError):
     pass
 class BadNumber (ScriptError):
     pass
-class NonMinimalPush (ScriptError):
+class StrictEncodingError (ScriptError):
     pass
-class NonMinimalInt (ScriptError):
+class NonMinimalPush (StrictEncodingError):
     pass
-class NonNullDummy (ScriptError):
+class NonMinimalInt (StrictEncodingError):
+    pass
+class NonNullDummy (StrictEncodingError):
+    pass
+class BadDER (StrictEncodingError):
+    pass
+class BadHashType (StrictEncodingError):
     pass
 
 cdef enum OP_KIND:
