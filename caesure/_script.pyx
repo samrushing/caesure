@@ -282,6 +282,7 @@ def is_p2sh (list s):
         and len(s[1]) == 3
         and s[1][0] == KIND_PUSH
         and len(s[1][1]) == 20
+        and s[1][2] == PUSH_N
         )
 
 def parse_script (s):
@@ -301,9 +302,7 @@ cpdef bint is_minimal (bytes data, int push_kind):
         return push_kind == PUSH_OP
     elif ld == 1:
         d = ord(data[0])
-        if d == 0x00:
-            return push_kind == PUSH_OP
-        elif 0x01 <= d <= 0x10:
+        if 0x01 <= d <= 0x10:
             return push_kind == PUSH_OP
         elif d == 0x81:
             return push_kind == PUSH_OP
