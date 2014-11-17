@@ -639,19 +639,19 @@ class verifying_machine (machine):
 class verifying_machine_p2sh (verifying_machine):
 
     def check_p2sh (self, lock_script, unlock_script):
-        for insn in walk_script (unlock_script):
+        for insn in unlock_script:
             if insn[0] is not KIND_PUSH:
                 raise BadScript (insn)
 
-    def eval_script (self, unlock_script, lock_script):
+    def eval_script (self, unlock_script0, lock_script0):
         # special treatment here, the top item on the stack is a *script*,
         #   which must match the hash in <s>.  We then evaluate that script.
         #   there are additional requirements on the unlock script that will
         #   need to be checked...
-        self.check_script0 (lock_script)
-        self.check_script0 (unlock_script)
-        lock_script = parse_script (lock_script)
-        unlock_script = parse_script (unlock_script)
+        self.check_script0 (lock_script0)
+        self.check_script0 (unlock_script0)
+        lock_script = parse_script (lock_script0)
+        unlock_script = parse_script (unlock_script0)
         #W ('lock_script = %r\n' % (lock_script))
         #W ('unlock_script = %r\n' % (unlock_script))
         if is_p2sh (lock_script):
@@ -672,12 +672,8 @@ class verifying_machine_p2sh (verifying_machine):
                 self._eval_script (unlock_script)
                 do_verify (self)
         else:
-            # XXX should just call the parent class version.
-            self._eval_script (unlock_script)
-            self.clear_alt()
-            self._eval_script (lock_script)
-            self.need (1)
-            do_verify (self)
+            # XXX NOTE: this results in extra calls to check_script0
+            verifying_machine.eval_script (self, unlock_script0, lock_script0)
 
 def remove_sigs (p, sigs):
     "remove any of <sigs> from <p>"
