@@ -264,6 +264,7 @@ class handler:
                 ('|ready|', len(bh.ready)),
                 ('target', bh.target),
                 ('|queue|', len(bh.queue)),
+                ('remaining', bh.remaining),
                 ])
             )
         else:
