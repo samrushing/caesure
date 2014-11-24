@@ -8,7 +8,7 @@ import re
 import string
 import struct
 import sys
-import time
+
 from pprint import pprint as pp
 
 from caesure import block_db
@@ -18,6 +18,8 @@ from caesure import script
 from caesure.bitcoin import *
 from caesure.ansi import *
 from caesure.asn1_log import ASN1_Logger
+from caesure.connection import BaseConnection, parse_addr_arg
+from caesure.addrcache import AddressCache
 
 ticks_to_sec = coro.tsc_time.ticks_to_sec
 
@@ -66,108 +68,6 @@ dns_seeds = [
     "seed.bitnodes.io",
     "bitseed.xf2.org",
 ]
-
-def make_nonce():
-    return random.randint (0, 1 << 64)
-
-class BaseConnection:
-
-    # protocol version
-    version = 70001
-    # software version
-    version_string = '/caesure:20141014/'
-    # relay flag (see bip37 for details...)
-    relay = False
-
-    def __init__ (self, my_addr, other_addr, conn=None):
-        self.my_addr = my_addr
-        self.other_addr = other_addr
-        self.nonce = make_nonce()
-        self.other_version = None
-        self.send_mutex = coro.mutex()
-        if conn is None:
-            if ':' in other_addr[0]:
-                self.conn = coro.tcp6_sock()
-            else:
-                self.conn = coro.tcp_sock()
-        else:
-            self.conn = conn
-        self.packet_count = 0
-        self.stream = coro.read_stream.sock_stream (self.conn)
-
-    def connect (self):
-        G.log ('connect', self.other_addr)
-        self.conn.connect (self.other_addr)
-
-    def send_packet (self, command, payload):
-        with self.send_mutex:
-            lc = len(command)
-            assert (lc < 12)
-            cmd = command + ('\x00' * (12 - lc))
-            h = dhash (payload)
-            checksum, = struct.unpack ('<I', h[:4])
-            self.conn.writev ([
-                block_db.MAGIC,
-                cmd,
-                struct.pack ('<II', len(payload), checksum),
-                payload
-            ])
-            if G.args.packet:
-                G.log ('send', self.other_addr, command, payload)
-            if G.verbose and command not in ('ping', 'pong'):
-                WT (' ' + command)
-
-    def get_our_block_height (self):
-        return G.block_db.last_block
-
-    def send_version (self):
-        v = caesure.proto.VERSION()
-        v.version = self.version
-        v.services = 1
-        v.timestamp = int(time.time())
-        v.you_addr = (1, self.other_addr)
-        v.me_addr = (1, self.my_addr)
-        v.nonce = self.nonce
-        v.sub_version_num = self.version_string
-        start_height = self.get_our_block_height()
-        if start_height < 0:
-            start_height = 0
-        v.start_height = start_height
-        v.relay = self.relay
-        self.send_packet ('version', v.pack())
-
-    def gen_packets (self):
-        while 1:
-            # XXX consider lowering this and using ping.
-            data = coro.with_timeout (1800, self.stream.read_exact, 24)
-            if not data:
-                G.log ('closed', self.other_addr)
-                break
-            magic, command, length, checksum = struct.unpack ('<I12sII', data)
-            command = command.strip ('\x00')
-            if G.verbose and command not in ('ping', 'pong'):
-                WF (' ' + command)
-            self.packet_count += 1
-            self.header = magic, command, length
-            # XXX need timeout here for DoS
-            if length:
-                payload = self.stream.read_exact (length)
-            else:
-                payload = ''
-            if G.args.packet:
-                G.log ('recv', self.other_addr, command, payload)
-            G.hoover.live_cv.wake_one (self)
-            yield (command, payload)
-
-    def getblocks (self):
-        hashes = G.block_db.set_for_getblocks()
-        hashes.append (block_db.ZERO_NAME)
-        self.send_packet ('getblocks', caesure.proto.pack_getblocks (self.version, hashes))
-
-    def getdata (self, items):
-        "request (TX|BLOCK)+ from the other side"
-        # note: pack_getdata == pack_inv
-        self.send_packet ('getdata', caesure.proto.pack_inv (items))
 
 class BadState (Exception):
     pass
@@ -285,7 +185,6 @@ class Connection (BaseConnection):
     relay = False
 
     def __init__ (self, my_addr, other_addr, sock=None):
-        BaseConnection.__init__ (self, my_addr, other_addr, sock)
         self.last_packet = 0
         if sock is not None:
             self.direction = 'incoming'
@@ -295,10 +194,15 @@ class Connection (BaseConnection):
         self.known = set()
         self.kick_download = None
         self.other_name = ''
-        coro.spawn (self.go)
+        BaseConnection.__init__ (self, my_addr, other_addr, sock)
 
     def get_our_block_height (self):
         return G.block_db.last_block
+
+    def getblocks (self):
+        hashes = self.G.block_db.set_for_getblocks()
+        hashes.append (block_db.ZERO_NAME)
+        self.send_packet ('getblocks', caesure.proto.pack_getblocks (self.version, hashes))
 
     def go (self):
         try:
@@ -311,7 +215,10 @@ class Connection (BaseConnection):
                 if self.direction == 'outgoing':
                     coro.with_timeout (30, self.connect)
                 self.send_version()
-                for command, payload in self.gen_packets():
+                while 1:
+                    command, payload = self.get_packet()
+                    if command is None:
+                        break
                     self.do_command (command, payload)
                     self.last_packet = coro.now
             except OSError:
@@ -326,12 +233,6 @@ class Connection (BaseConnection):
                 G.in_conn_sem.release (1)
             else:
                 G.out_conn_sem.release (1)
-
-    def check_command_name (self, command):
-        for ch in command:
-            if ch not in string.letters:
-                return False
-        return True
 
     def wait_for (self, key):
         "wait on a CV with <key> (used by get_block, etc...)"
@@ -355,6 +256,7 @@ class Connection (BaseConnection):
         return coro.with_timeout (timeout, self.wait_for, key)
 
     def do_command (self, cmd, data):
+        G.hoover.live_cv.wake_one (self)
         if self.waiting.has_key (cmd):
             self.waiting[cmd].wake_all ((cmd, data))
         if self.check_command_name (cmd):
@@ -576,13 +478,6 @@ class Connection (BaseConnection):
             self.send_packet ('inv', caesure.proto.pack_inv (pairs0))
             self.known.update (pairs0)
 
-    def test_gh (self, back):
-        db = G.block_db
-        save, db.last_block = db.last_block, db.last_block - back
-        hashes = G.block_db.set_for_getblocks()
-        db.last_block = save
-        return self.getheaders (hashes)
-
     def getheaders (self, hashes=None):
         # on this connection only, download the entire chain of headers from our
         #   tip to the other side's tip.
@@ -610,71 +505,6 @@ class Connection (BaseConnection):
                 hashes[0] = chain[-1]
         # we already have chain[0]
         return chain[1:]
-
-class AddressCache:
-
-    def __init__ (self):
-        self.cache = {}
-        self.load()
-
-    def add (self, timestamp, entry):
-        # each entry consists of (services, (addr, port))
-        (services, (ip, port)) = entry
-        if is_routable (ip):
-            self.cache[(ip, port)] = (timestamp, services)
-
-    save_path = 'peers.bin'
-
-    def save (self):
-        from __main__ import G
-        save_path = os.path.join (G.args.base, self.save_path)
-        pickle.dump (self.cache, open (save_path, 'wb'), 2)
-
-    def load (self):
-        from __main__ import G
-        save_path = os.path.join (G.args.base, self.save_path)
-        try:
-            self.cache = pickle.load (open (save_path, 'rb'))
-            G.log ('address-cache', 'load', len(self.cache))
-        except IOError:
-            pass
-        if not self.cache:
-            self.seed()
-
-    def __len__ (self):
-        return len(self.cache)
-
-    def random (self):
-        return random.choice (self.cache.keys())
-
-    def purge (self):
-        now = coro.tsc_time.now_raw_posix_sec()
-        keys = self.cache.keys()
-        for key in keys:
-            timestamp, services = self.cache[key]
-            if (now - timestamp) > (3 * 60 * 60):
-                del self.cache[key]
-
-    def purge_thread (self):
-        while 1:
-            coro.sleep_relative (5 * 61)
-            self.purge()
-            self.save()
-
-    def seed (self):
-        # called only when we don't have a cached peer set.
-        G.log ('dns', 'seeding...')
-        timestamp = coro.tsc_time.now_raw_posix_sec()
-        r = coro.get_resolver()
-        addrs = set()
-        for seed in dns_seeds:
-            try:
-                for (t, ip) in r.cache.query (seed, 'A'):
-                    self.add (timestamp, (1, (ip, 8333)))
-                for (t, ip) in r.cache.query (seed, 'AAAA'):
-                    self.add (timestamp, (1, (ip, 8333)))
-            except coro.dns.exceptions.DNS_Soft_Error:
-                pass
 
 # --------------------------------------------------------------------------------
 
@@ -771,20 +601,6 @@ def new_random_addr():
 
 ipv4_server_addrs = []
 ipv6_server_addrs = []
-
-ipv6_server_re = re.compile ('\[([A-Fa-f0-9:]+)\]:([0-9]+)')
-ipv4_server_re = re.compile ('([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+):([0-9]+)')
-
-def parse_addr_arg (addr):
-    m = ipv4_server_re.match (addr)
-    if not m:
-        m = ipv6_server_re.match (addr)
-        if not m:
-            raise ValueError ("bad server address: %r" % (addr,))
-    ip0, port0 = m.groups()
-    port0 = int (port0)
-    addr0 = (ip0, port0)
-    return addr0
 
 def serve (addr):
     addr0 = parse_addr_arg (addr)
