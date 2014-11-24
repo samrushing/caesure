@@ -27,6 +27,12 @@ KIND_OP    = 2
 KIND_CHECK = 3
 KIND_SEP   = 4
 
+PUSH_OP = 0 # OP_1NEGATE, OP_0, OP_1 .. OP_16
+PUSH_N  = 1 # <5> "abcde"
+PUSH_1  = 2 # "a"
+PUSH_2  = 3 # 0x1234 ....
+PUSH_4  = 4 # 0xdeadbeef "never used..."
+
 SIGHASH_ALL          = 0x01
 SIGHASH_NONE         = 0x02
 SIGHASH_SINGLE       = 0x03
