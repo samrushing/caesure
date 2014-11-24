@@ -85,9 +85,13 @@ class BlockHoover:
         self.running = False
         self.live_cv = coro.condition_variable()
         self.in_flight_sem = coro.semaphore (in_flight)
+        self.remaining = 0
 
     def get_live_connection (self):
-        return self.live_cv.wait()
+        if len(G.connection_map) == 1:
+            return G.connection_map.values()[0]
+        else:
+            return self.live_cv.wait()
 
     def notify_height (self, conn, height):
         if height > self.target:
@@ -118,9 +122,11 @@ class BlockHoover:
             if names:
                 # start fetching them...
                 coro.spawn (self.drain_queue_thread)
+                self.remaining = len(names)
                 for name in names:
                     self.in_flight_sem.acquire(1)
                     self.push (name)
+                    self.remaining -= 1
                 self.queue.push (None)
         finally:
             self.running = False
@@ -142,9 +148,10 @@ class BlockHoover:
             strname = str(name)
             t0 = coro.now_usec
             G.log ('hoover', 'asked', strname)
-            self.add_block (conn.get_block (name))
-            G.log ('hoover', 'recv', strname)
+            block = conn.get_block (name)
             self.in_flight_sem.release(1)
+            self.add_block (block)
+            G.log ('hoover', 'recv', strname)
         except coro.TimeoutError:
             # let some other connection try it...
             G.log ('hoover', 'retry', strname)
