@@ -3,10 +3,8 @@
 
 import argparse
 import caesure.server
+from caesure.global_state import GlobalState
 import coro
-
-class GlobalState:
-    pass
 
 G = GlobalState()
 
