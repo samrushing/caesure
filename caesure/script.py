@@ -38,12 +38,6 @@ SIGHASH_NONE         = 0x02
 SIGHASH_SINGLE       = 0x03
 SIGHASH_ANYONECANPAY = 0x80
 
-PUSH_OP = 0 # OP_1NEGATE, OP_0, OP_1 .. OP_16
-PUSH_N  = 1 # <5> "abcde"
-PUSH_1  = 2 # "a"
-PUSH_2  = 3 # 0x1234 ....
-PUSH_4  = 4 # 0xdeadbeef "never used..."
-
 class OPCODES:
     # push value
     OP_0 = 0x00
