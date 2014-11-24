@@ -168,7 +168,7 @@ class BLOCK (caesure.proto.BLOCK):
     def dump (self, fout=sys.stdout):
         fout.write (
             'version:%d\n'
-            'prev_block:%s\n'
+            'prev_block:%r\n'
             'merkle_root:%r\n'
             'timestamp:%s\n'
             'bits:%08x\n'
