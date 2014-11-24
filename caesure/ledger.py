@@ -3,7 +3,7 @@
 import os
 import struct
 
-from caesure.script import pprint_script, OPCODES, parse_script
+from caesure.script import pprint_script, OPCODES, parse_script, is_unspendable
 from caesure.block_db import BlockDB
 from caesure.bitcoin import *
 from caesure.txfaa import UTXO_Map, UTXO_Scan_Map
@@ -48,7 +48,9 @@ class RecentBlocks:
             else:
                 G.log ('recent', 'nochain', height, str(block.name), str(block.prev_block))
         else:
+            t0 = timer()
             self.blocks[block.name] = tip.extend (block, tip.height + 1, verify)
+            W ('[tip.extend %0.2f]' % (t0.end(),))
             if len(self.blocks) > 2:
                 # otherwise we are in 'catch up' mode.
                 self.trim()
@@ -165,7 +167,7 @@ class LedgerState:
             total += len(v)
         return total
 
-    cache_version = 2
+    cache_version = 3
 
     def save_state (self):
         from coro.asn1.data_file import DataFileWriter
@@ -204,9 +206,10 @@ class LedgerState:
             f = open (path, 'rb')
             df = DataFileReader (f)
             info = df.read_object()
+            # XXX if we see an older version, pretend it's not there so it will be rebuilt.
             assert (info[0] == self.cache_version)  # version
             [_, self.height, self.block_name, self.total, self.lost, self.fees, size] = info
-            W (' height = %d ...' % (self.height,))
+            W (' height = %d size = %d ...' % (self.height, size))
             self.block_name = Name (self.block_name)
             n = [0]
             def gen():
@@ -227,21 +230,37 @@ class LedgerState:
 
     def store_outputs (self, tx):
         output_sum = 0
-        i = 0
         outputs = []
-        for amt, pk_script in tx.outputs:
-            #if len(pk_script) > 500:
-            #    W ('%r len(script) = %d\n' % (tx.name, len(pk_script)))
-            outputs.append ((i, amt, pk_script))
-            if amt > 0:
-                output_sum += amt
-            i += 1
+        for i, (amt, lock_script) in enumerate (tx.outputs):
+            #if len(lock_script) > 500:
+            #    W ('%r len(script) = %d\n' % (tx.name, len(lock_script)))
+            if not is_unspendable (lock_script):
+                outputs.append ((i, amt, lock_script))
+            output_sum += amt
         self.outpoints.new_entry (str(tx.name), outputs)
         self.total += output_sum
         return output_sum
 
     def get_utxo (self, name, index):
         return self.outpoints.get_utxo (name, index)
+
+    def feed_tx (self, index, tx, verify=False):
+        input_sum = 0
+        for j in range (len (tx.inputs)):
+            (outpoint, index), script, sequence = tx.inputs[j]
+            outstr = str(outpoint)
+            amt, lock_script = self.outpoints.pop_utxo (outstr, index)
+            if verify:
+                try:
+                    tx.verify (j, lock_script, b.timestamp)
+                except VerifyError:
+                    self.outpoints.new_entry (outstr, [(index, amt, lock_script)])
+                    raise
+            input_sum += amt
+            if self.do_yields and j % 20 == 19:
+                coro.yield_slice()
+        output_sum = self.store_outputs (tx)
+        return input_sum, output_sum
 
     def feed_block (self, b, height, verify=False):
         if b.prev_block != self.block_name:
@@ -253,22 +272,9 @@ class LedgerState:
         for i, tx in enumerate (b.transactions):
             if i == 0:
                 continue
-            # verify each transaction
-            # first, we need the output script for each of the inputs
-            input_sum = 0
-            for j in range (len (tx.inputs)):
-                (outpoint, index), script, sequence = tx.inputs[j]
-                amt, oscript = self.outpoints.pop_utxo (str(outpoint), index)
-                #W ('.')
-                if verify:
-                    tx.verify (j, oscript, b.timestamp)
-                # XXX if it fails to verify, put it back!
-                input_sum += amt
-            output_sum = self.store_outputs (tx)
+            input_sum, output_sum = self.feed_tx (i, tx, verify)
             fees += input_sum - output_sum
             self.total -= input_sum
-            if self.do_yields and i % 50 == 0:
-                coro.yield_slice()
         self.fees += fees
         reward1 = compute_reward (height)
         if reward1 + fees != reward0:
@@ -306,7 +312,7 @@ def catch_up (G):
     ledger = LedgerState (load=True)
 
     if len(ledger.outpoints) == 0:
-        W ('no outpoints cache.  performing fast scan [15-40 minutes]\n')
+        W ('no outpoints cache.  performing fast scan [30-45 minutes]\n')
         ledger.outpoints = UTXO_Scan_Map()
         fast_scan = True
     else:
@@ -321,9 +327,6 @@ def catch_up (G):
     most_names = names[:-20]
     i = 0
     fed = 0
-    # lots of disk i/o leads to multi-second latencies, ignore for now.
-    # [XXX looking into using a disk i/o thread for this?]
-    coro.set_latency_warning (0)
     for name in most_names:
         if i == ledger.height + 1:
             if i % 1000 == 0:
@@ -339,7 +342,6 @@ def catch_up (G):
             pdb.set_trace()
         i += 1
         coro.yield_slice()
-    coro.set_latency_warning (1)
 
     W('\n')
     W('       total=%20s\n' % bcrepr(ledger.total + ledger.lost))
