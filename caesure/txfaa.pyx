@@ -22,83 +22,19 @@ from libcpp.vector cimport vector
 from libcpp.string cimport string
 from cython.operator cimport dereference as deref, preincrement as inc
 
-cdef struct outpoint:
-    uint16_t index
-    uint64_t amt
-    string script
+# XXX consider the security implications of using only half the txname.
+# can someone that knows we are using only half do something evil?
 
-
-# you may be tempted to do this, but don't.  it *really* slows things down.
-#@cython.freelist(200)
-
-cdef class outpoint_set:
-    cdef vector[outpoint] v
-
-    def __init__ (self, vals):
-        self.val = vals
-
-    def __len__ (self):
-        return self.v.size()
-
-    def __repr__ (self):
-        r = []
-        for i, amt, script in self.val:
-            r.append (str(i))
-        return '<%s>' % (' '.join (r))
-
-    property val:
-        def __get__ (self):
-            cdef outpoint o
-            cdef list r = []
-            for o in self.v:
-                r.append ((o.index, o.amt, o.script))
-            return r
-        def __set__ (self, vals):
-            cdef outpoint o
-            cdef list r = []
-            self.v.resize (len (vals))
-            for i in range (len (vals)):
-                (index, amt, script) = vals[i]
-                self.v[i].index = index
-                self.v[i].amt = amt
-                self.v[i].script = script
-    
-    cdef get_output (self, index):
-        cdef vector[outpoint].iterator i0
-        cdef int j = 0
-        i0 = self.v.begin()
-        # XXX worth a binary search?
-        while i0 != self.v.end():
-            if deref(i0).index == index:
-                return deref(i0).amt, deref(i0).script
-            else:
-                j += 1
-            inc (i0)
-        raise KeyError (index)
-
-    cdef pop_utxo (self, int index, fist f):
-        cdef outpoint_set m = outpoint_set([])
-        cdef vector[outpoint].iterator i0
-        cdef int j = 0
-        m.v.resize (len(self.v) - 1)
-        i0 = self.v.begin()
-        while i0 != self.v.end():
-            if deref(i0).index == index:
-                f.amt = deref(i0).amt
-                f.script = deref(i0).script
-            else:
-                m.v[j].index = deref(i0).index
-                m.v[j].amt = deref(i0).amt
-                m.v[j].script = deref(i0).script
-                j += 1
-            inc (i0)
-        return m
+cdef enum:
+    # 16 bytes of key, 2 bytes of index.
+    KEYSIZE = 18
 
 cdef class aa_node:
     cdef readonly uint8_t level
     cdef readonly aa_node l, r
-    cdef readonly char[32] k
-    cdef readonly outpoint_set v
+    cdef char[KEYSIZE] k
+    cdef readonly uint64_t amt
+    cdef readonly string script
 
     def __cinit__ (self, int level, aa_node l, aa_node r):
         self.level = level
@@ -107,9 +43,9 @@ cdef class aa_node:
 
     property key:
         def __get__ (self):
-            return self.k[:32]
+            return self.k[:KEYSIZE]
         def __set__ (self, char * val):
-            memcpy (self.k, val, 32)
+            memcpy (self.k, val, KEYSIZE)
 
     cdef aa_node copy (self):
         cdef aa_node n
@@ -120,14 +56,16 @@ cdef class aa_node:
 
 cdef aa_node copy_node (int level, aa_node l, aa_node r, aa_node other):
     cdef aa_node n = aa_node (level, l, r)
-    memcpy (<char*>n.k, <char*>other.k, 32)
-    n.v = other.v
+    memcpy (<char*>n.k, <char*>other.k, KEYSIZE)
+    n.amt = other.amt
+    n.script = other.script
     return n
 
-cdef make_node (int level, aa_node l, aa_node r, char * key, object val):
+cdef make_node (int level, aa_node l, aa_node r, char * key, uint64_t amt, bytes script):
     cdef aa_node node = aa_node (level, l, r)
-    memcpy (<char*>node.k, <char*>key, 32)
-    node.v = outpoint_set (val)
+    memcpy (<char*>node.k, <char*>key, KEYSIZE)
+    node.amt = amt
+    node.script = script
     return node
 
 import sys
@@ -139,7 +77,6 @@ cdef aa_node tree_nil
 tree_nil = aa_node (0, tree_nil, tree_nil)
 tree_nil.l = tree_nil
 tree_nil.r = tree_nil
-tree_nil.v = outpoint_set ([])
 
 # non-recursive skew and split
 
@@ -165,30 +102,32 @@ cdef aa_node split (aa_node n):
     else:
         return n
 
-cdef aa_node tree_insert (aa_node n, char * key, object val):
+cdef aa_node tree_insert (aa_node n, char * key, uint64_t amt, bytes script):
     cdef aa_node n0
     cdef int compare
     if n.level == 0:
-        return make_node (1, tree_nil, tree_nil, key, val)
+        return make_node (1, tree_nil, tree_nil, key, amt, script)
     else:
-        compare = memcmp (n.k, key, 32)
+        compare = memcmp (n.k, key, 18)
         if compare > 0:
-            n0 = copy_node (n.level, tree_insert (n.l, key, val), n.r, n)
+            n0 = copy_node (n.level, tree_insert (n.l, key, amt, script), n.r, n)
         else:
-            n0 = copy_node (n.level, n.l, tree_insert (n.r, key, val), n)
+            n0 = copy_node (n.level, n.l, tree_insert (n.r, key, amt, script), n)
         return split (skew (n0))
 
 # build a completish tree from sorted input
 cdef aa_node tree_build (data_gen, int lo, int hi):
     cdef int mid = ((hi - lo) / 2) + lo
     cdef aa_node l, r
+    cdef uint64_t amt
+    cdef bytes script
     if mid == hi == lo:
         return tree_nil
     else:
         l = tree_build (data_gen, lo, mid)
-        txname, outputs = data_gen.next()
+        key, amt, script = data_gen.next()
         r = tree_build (data_gen, mid + 1, hi)
-        return make_node (l.level + 1, l, r, txname, outputs)
+        return make_node (l.level + 1, l, r, key, amt, script)
 
 # the Stark Fist of Removal.  This class is just a placeholder for the two static/global variables
 #  used in the deletion algorithm.  [plus the amt & script values we are popping]
@@ -206,41 +145,38 @@ cdef class fist:
 # This is based on julienne's version of anderson's deletion algorithm.
 #  I found it a little easier to reason about (w.r.t. immutability).
 
-cdef aa_node tree_remove (fist self, aa_node root, char * key, int index):
+cdef aa_node tree_remove (fist self, aa_node root, char * key):
     cdef aa_node root0
     cdef int compare
     # search down the tree
     if root is not tree_nil:
         self.heir = root
-        compare = memcmp (root.k, key, 32)
+        compare = memcmp (root.k, key, KEYSIZE)
         root0 = root.copy()
         if compare >= 0:
             self.item = root0
-            root0.l = tree_remove (self, root0.l, key, index)
+            root0.l = tree_remove (self, root0.l, key)
         else:
-            root0.r = tree_remove (self, root0.r, key, index)
+            root0.r = tree_remove (self, root0.r, key)
     else:
         root0 = root
     if root is self.heir:
         # at the bottom, remove
-        if self.item is not tree_nil and memcmp (self.item.k, key, 32) == 0:
-            self.item.v = self.item.v.pop_utxo (index, self)
-            if len(self.item.v) == 0:
-                # empty, remove it
-                self.removed = True
-                memcpy (self.item.k, self.heir.k, 32)
-                self.item.v = self.heir.v
-                self.item = tree_nil
-                # here, we diverge from AA's paper, where he always return root0.r.
-                if root0.r is tree_nil:
-                    return root0.l
-                else:
-                    return root0.r
+        if self.item is not tree_nil and memcmp (self.item.k, key, KEYSIZE) == 0:
+            # empty, remove it
+            self.removed = True
+            self.amt = self.item.amt
+            self.script = self.item.script
+            memcpy (self.item.k, self.heir.k, KEYSIZE)
+            self.item.amt = self.heir.amt
+            self.item.script = self.heir.script
+            self.item = tree_nil
+            # here, we diverge from AA's paper, where he always return root0.r.
+            if root0.r is tree_nil:
+                return root0.l
             else:
-                # not empty yet, don't remove it
-                return root0
+                return root0.r
         else:
-            # KeyError?
             return root0
     else:
         # not at the bottom, rebalance
@@ -293,7 +229,16 @@ def verify (aa_node t):
 def dump (t):
     W ('---\n')
     for n, d in walk_depth (t, 0):
-        W ('%s%4d %r\n' % ('  ' * d, n.level, n.k[:32]))
+        W ('%s%4d %r\n' % ('  ' * d, n.level, n.k[:KEYSIZE]))
+
+cdef bytes uint16_be (uint16_t n):
+    cdef uint8_t result[2]
+    result[0] = (n >> 8) & 0xff
+    result[1] = (n >> 0) & 0xff
+    return result[:2]
+
+cpdef bytes make_key (bytes txname, uint16_t index):
+    return txname[:16] + uint16_be (index)
 
 cdef class UTXO_Map:
 
@@ -327,7 +272,7 @@ cdef class UTXO_Map:
             if search == tree_nil:
                 return tree_nil
             else:
-                compare = memcmp (search.k, <char*>key, 32)
+                compare = memcmp (search.k, <char*>key, KEYSIZE)
                 if compare == 0:
                     return search
                 elif compare < 0:
@@ -339,40 +284,40 @@ cdef class UTXO_Map:
         cdef aa_node probe = self._search (key)
         return probe is not tree_nil
 
-    def get_utxo (self, object name, int index):
-        cdef aa_node probe = self._search (name)
+    def get_utxo (self, bytes name, int index):
+        cdef bytes key = make_key (name, index)
+        cdef aa_node probe = self._search (key)
         if probe is not tree_nil:
-            return probe.v.get_output (index)
+            return probe.amt, probe.script
         else:
-            raise KeyError (name)
+            raise KeyError ((name, index))
 
     def __iter__ (self):
-        # (<txname>, [(<index>, <amt>, <script>), ...])
         for node in walk (self.root):
-            yield node.key, node.v.val
+            yield node.key, node.amt, node.script
 
     def verify (self):
         verify (self.root)
 
     def dump (self, fout):
         for n, d in walk_depth (self.root, 0):
-            fout.write ('%s%4d %r:%r\n' % ('  ' * d, n.level, n.key.encode('hex'), n.v))
+            fout.write ('%s%4d %r:%r\n' % ('  ' * d, n.level, n.key.encode('hex'), n.amt, n.script))
 
     def new_entry (self, bytes txname, object vals):
         cdef aa_node new_root
-        if len(vals) == 0:
-            raise ValueError
-        self.root = tree_insert (self.root, txname, vals)
+        for index, amt, script in vals:
+            self.root = tree_insert (self.root, make_key (txname, index), amt, script)
         self.length += 1
-        #assert (txname in self)
 
     def pop_utxo (self, bytes txname, int index):
+        cdef bytes key = make_key (txname, index)
         f = fist()
-        #assert (txname in self)
-        self.root = tree_remove (f, self.root, txname, index)
+        self.root = tree_remove (f, self.root, key)
         if f.removed:
             self.length -= 1
-        return f.amt, f.script
+            return f.amt, f.script
+        else:
+            raise KeyError
 
 # -------------------------------------------------------------------
 # This is a straightforward STL version of the map, used just for
@@ -383,9 +328,8 @@ from libcpp.pair cimport pair
 from libcpp.map cimport map
 from libcpp.set cimport set
 
-# XXX figure out why cython barfs at uint64_t here
-#ctypedef pair [uint64_t, string] outpoint_val
-ctypedef pair [long, string] outpoint_val
+# Note: if you get an error here, you need to upgrade cython.
+ctypedef pair [uint64_t, string] outpoint_val
 ctypedef map [uint16_t, outpoint_val] outpoint_map
 ctypedef map [string, outpoint_map] utxo_map
 
@@ -394,7 +338,16 @@ cdef class UTXO_Scan_Map:
     cdef utxo_map m
 
     def __len__ (self):
-        return self.m.size()
+        # Note: manually tracking the length here screws up because of two duplicate coinbase txns:
+        # d5d27987d2a3dfc724e359870c6644b40e497bdc0589a033220fe15429d88599 91812 91842
+        # e3bf3d07d4b0375638d5f1db5255fe07ba2c4cb067cd81b84ee974b6585fb468 91722 91880 
+        cdef map[string, outpoint_map].iterator i0
+        cdef long n = 0
+        i0 = self.m.begin()
+        while i0 != self.m.end():
+            n += deref(i0).second.size()
+            inc(i0)
+        return n
 
     def new_entry (self, bytes txname, object vals):
         cdef map[string, outpoint_map].iterator i0
@@ -435,17 +388,11 @@ cdef class UTXO_Scan_Map:
     def __iter__ (self):
         cdef map[string, outpoint_map].iterator i0
         cdef map[uint16_t, outpoint_val].iterator i1
-        cdef list item
-        cdef int j
         i0 = self.m.begin()
         while i0 != self.m.end():
             i1 = deref(i0).second.begin()
-            item = [None] * deref(i0).second.size()
-            j = 0
             while i1 != deref (i0).second.end():
                 index, (amt, script) = deref (i1)
-                item[j] = (index, amt, script)
+                yield make_key (deref(i0).first, index), amt, script
                 inc (i1)
-                j += 1
-            yield (deref(i0).first, item)
             inc(i0)
