@@ -10,7 +10,7 @@ from urllib import splitquery
 from urlparse import parse_qs
 from cgi import escape
 from caesure._script import parse_script, ScriptError
-from caesure.script import pprint_script, OPCODES
+from caesure.script import pprint_script, OPCODES, PUSH_OP
 from caesure.proto import hexify, Name, name_from_hex
 from caesure.bitcoin import *
 
@@ -124,15 +124,11 @@ def is_p2sh_tx (s):
             and len(s[1][1]) == 20):
         return 'p2sh', key_to_address (s[1][1], 5)
 
-OP_NUMS = {}
-for i in range (0x51, 0x61):
-    OP_NUMS[i] = i - 0x50
-
 def is_multi_tx (s):
     # OP_3 pubkey0 pubkey1 pubkey2 OP_3 OP_CHECKMULTISIG
     if is_checkmultisig (s[-1]):
-        n0 = OP_NUMS.get (s[0][1], None)
-        n1 = OP_NUMS.get (s[-2][1], None)
+        n0 = unrender_int (s[0][1])
+        n1 = unrender_int (s[-2][1])
         if n0 is None or n1 is None:
             return None
         elif n1 == (len(s) - 3):
@@ -175,12 +171,16 @@ def describe_iscript (p):
             return key_to_address (rhash (pubkey))
         else:
             return shorthex (pubkey)
-    elif p[0] == (0, '') and all ([x[0] == 0 for x in p[1:]]):
+    elif p[0] == (0, '', PUSH_OP) and all ([x[0] == 0 for x in p[1:]]):
         # p2sh redeem
         sigs = p[1:-1]
         try:
             redeem = parse_script (p[-1][1])
-            _, val = is_multi_tx (redeem)
+            probe = is_multi_tx (redeem)
+            if probe is not None:
+                _, val = probe
+            else:
+                val = repr(probe)
             return 'p2sh (%d sigs):%s' % (len(sigs), val)
         except ScriptError:
             return 'bad p2sh'
