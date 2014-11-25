@@ -6,7 +6,7 @@ import struct
 import time
 
 import coro
-from caesure.bitcoin import dhash
+from caesure.bitcoin import dhash, network
 from caesure.ansi import *
 from caesure.proto import VERSION, pack_inv, unpack_version
 
@@ -39,15 +39,10 @@ class BaseConnection:
     # relay flag (see bip37 for details...)
     relay = False
 
-    # This class expects a 'GlobalState' object in __main__.G
-    #  with the following attributes:
-    #    args (an argparse instance)
-    #    verbose (boolean)
-    #    log (a logging method)
-
-    def __init__ (self, my_addr, other_addr, conn=None):
-        from __main__ import G
-        self.G = G
+    def __init__ (self, my_addr, other_addr, conn=None, log_fun=None, verbose=False, packet=False):
+        self.log_fun = log_fun
+        self.verbose = verbose
+        self.packet = packet
         self.my_addr = my_addr
         self.other_addr = other_addr
         self.nonce = make_nonce()
@@ -63,8 +58,12 @@ class BaseConnection:
         self.packet_count = 0
         coro.spawn (self.go)
 
+    def log (self, *args):
+        if self.log_fun is not None:
+            self.log_fun (*args)
+
     def connect (self):
-        self.G.log ('connect', self.other_addr)
+        self.log ('connect', self.other_addr)
         self.conn.connect (self.other_addr)
 
     def send_packet (self, command, payload):
@@ -75,14 +74,14 @@ class BaseConnection:
             h = dhash (payload)
             checksum, = struct.unpack ('<I', h[:4])
             self.conn.writev ([
-                self.G.MAGIC,
+                network.MAGIC,
                 cmd,
                 struct.pack ('<II', len(payload), checksum),
                 payload
             ])
-            if self.G.args.packet:
-                self.G.log ('send', self.other_addr, command, payload)
-            if self.G.verbose and command not in ('ping', 'pong'):
+            if self.packet:
+                self.log ('send', self.other_addr, command, payload)
+            if self.verbose and command not in ('ping', 'pong'):
                 WT (' ' + command)
 
     def get_our_block_height (self):
@@ -112,11 +111,11 @@ class BaseConnection:
     def get_packet (self, timeout=1800):
         data = coro.with_timeout (timeout, self.conn.recv_exact, 24)
         if not data:
-            self.G.log ('closed', self.other_addr)
+            self.log ('closed', self.other_addr)
             return None, None
         magic, command, length, checksum = struct.unpack ('<I12sII', data)
         command = command.strip ('\x00')
-        if self.G.verbose and command not in ('ping', 'pong'):
+        if self.verbose and command not in ('ping', 'pong'):
             WF (' ' + command)
         self.packet_count += 1
         self.header = magic, command, length
@@ -124,8 +123,8 @@ class BaseConnection:
             payload = coro.with_timeout (30, self.conn.recv_exact, length)
         else:
             payload = ''
-        if self.G.args.packet:
-            self.G.log ('recv', self.other_addr, command, payload)
+        if self.packet:
+            self.log ('recv', self.other_addr, command, payload)
         return (command, payload)
 
     # please see server.py:Connection for a more complete version
