@@ -19,10 +19,13 @@ def P (msg):
 
 W = sys.stderr.write
 
-# these are overriden for testnet
-BITCOIN_PORT = 8333
-MAGIC = '\xf9\xbe\xb4\xd9'
-genesis_block_hash = Name ('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'.decode ('hex')[::-1])
+class NetworkConfig:
+    # these are overriden for testnet
+    BITCOIN_PORT = 8333
+    MAGIC = '\xf9\xbe\xb4\xd9'
+    genesis_block_hash = Name ('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'.decode ('hex')[::-1])
+
+network = NetworkConfig()
 
 ZERO_NAME = Name ('\x00' * 32)
 
