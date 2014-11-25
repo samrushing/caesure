@@ -359,12 +359,12 @@ class handler:
             PUSH (
                 elem0 ('br'),
                 space2,
-                A ('First Block', href='/admin/block/%064x' % (genesis_block_hash,)),
+                A ('First Block', href='/admin/block/%064x' % (network.genesis_block_hash,)),
                 space2,
                 A ('Last Block', href='/admin/block/'),
                 elem0 ('br'),
             )
-            if name != genesis_block_hash:
+            if name != network.genesis_block_hash:
                 PUSH (space2, A ('Prev Block', href='/admin/block/%064x' % (db.prev[name],)))
             else:
                 PUSH (space2, 'Prev Block', elemz ('br'))
