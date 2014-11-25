@@ -111,7 +111,7 @@ class BlockHoover:
         # first, get a list of blocks we need to fetch via getheaders.
         db = G.block_db
         if not db.num_block:
-            self.push (block_db.genesis_block_hash)
+            self.push (network.genesis_block_hash)
         try:
             self.running = True
             # get the list of all blocks we need to fetch...
