@@ -162,9 +162,9 @@ def log (subject, *data):
 
 G = GlobalState()
 
-p = argparse.ArgumentParser (description='watch for new blocks (and txns with -r).')
+p = argparse.ArgumentParser (description='Pull a copy of the blockchain from another node.')
 p.add_argument ('connect', help="connect to this address", metavar='IP:PORT')
-p.add_argument ('-i', '--inflight', type=int, default=20)
+p.add_argument ('-i', '--inflight', help='number of blocks in flight.', type=int, default=20)
 p.add_argument ('-b', '--base', help='data directory', default='/usr/local/caesure', metavar='PATH')
 
 G.args = p.parse_args()
