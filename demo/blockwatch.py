@@ -65,7 +65,7 @@ def log (subject, *data):
 
 G = GlobalState()
 
-p = argparse.ArgumentParser (description='watch for new blocks (and txns with -r).')
+p = argparse.ArgumentParser (description='watch for new blocks (and txns with -t).')
 p.add_argument ('connect', action="append", help="connect to this address", metavar='IP:PORT')
 p.add_argument ('-v', '--verbose', action='store_true', help='show verbose packet flow')
 p.add_argument ('-b', '--base', help='data directory', default='/usr/local/caesure', metavar='PATH')
