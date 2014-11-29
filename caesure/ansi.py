@@ -26,3 +26,5 @@ WB = WF
 def WY (m):
     W (ansi (m, 33))
 
+def WM (m):
+    W (ansi (m, 35))
