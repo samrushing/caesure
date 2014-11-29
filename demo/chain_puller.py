@@ -36,7 +36,7 @@ from caesure.block_db import BlockDB, BLOCK
 class ChainPuller (BaseConnection):
 
     def __init__ (self, G, my_addr, other_addr):
-        BaseConnection.__init__ (self, my_addr, other_addr)
+        BaseConnection.__init__ (self, my_addr, other_addr, verbose=G.verbose)
         self.waiting = {}
 
     def wait_for (self, key):
@@ -54,7 +54,7 @@ class ChainPuller (BaseConnection):
         if hashes is None:
             hashes = G.block_db.set_for_getblocks()
             if not hashes:
-                hashes = [G.genesis_block_hash]
+                hashes = [network.genesis_block_hash]
         hashes.append (ZERO_NAME)
         chain = [hashes[0]]
         while 1:
@@ -62,7 +62,6 @@ class ChainPuller (BaseConnection):
             self.send_packet ('getheaders', pack_getblocks (self.version, hashes))
             _, data = coro.with_timeout (30, self.wait_for, 'headers')
             blocks = unpack_headers (data)
-            # XXX do some rule checks here to avoid miscreants.
             if len(blocks) == 0:
                 break
             else:
@@ -72,6 +71,26 @@ class ChainPuller (BaseConnection):
                     else:
                         G.log ('getheaders', 'nochain')
                         return []
+                hashes[0] = chain[-1]
+        return chain
+
+    def getblocks (self, hashes=None):
+        if hashes is None:
+            hashes = G.block_db.set_for_getblocks()
+            if not hashes:
+                hashes = [network.genesis_block_hash]
+        hashes.append (ZERO_NAME)
+        chain = [hashes[0]]
+        while 1:
+            # getheaders and getblocks have identical args/layout.
+            self.send_packet ('getblocks', pack_getblocks (self.version, hashes))
+            _, data = coro.with_timeout (30, self.wait_for, 'inv')
+            pairs = unpack_inv (data)
+            if len(pairs) == 0:
+                break
+            else:
+                for kind, name in pairs:
+                    chain.append (name)
                 hashes[0] = chain[-1]
         return chain
 
@@ -95,6 +114,9 @@ class ChainPuller (BaseConnection):
     def cmd_headers (self, payload):
         pass
 
+    def cmd_getdata (self, payload):
+        pass
+
 MB = 1024 * 1024
 GB = 1024 * MB
 
@@ -104,8 +126,12 @@ def go (G):
     addr1 = parse_addr_arg (G.args.connect)
     cp = ChainPuller (G, addr0, addr1)
     cp.wait_for ('verack')
-    W ('downloading headers...\n')
-    names = cp.getheaders()
+    if G.args.getblocks:
+        W ('downloading block names...\n')
+        names = cp.getblocks()
+    else:
+        W ('downloading headers...\n')
+        names = cp.getheaders()
     start = time.time()
     W ('got %d names...\n' % (len(names),))
     WB ('[BLOCKNUM] ')
@@ -139,9 +165,9 @@ def write_thread():
         b.unpack (data)
         total_bytes += len(data)
         in_flight -= 1
+        G.block_db.write_block (b.get_name(), b)
         if in_flight < G.args.inflight:
             in_flight_cv.wake_all()
-        G.block_db.write_block (b.get_name(), b)
         n += 1
         if n % 1000 == 0:
             WB ('[%d]' % (n,))
@@ -166,6 +192,7 @@ p = argparse.ArgumentParser (description='Pull a copy of the blockchain from ano
 p.add_argument ('connect', help="connect to this address", metavar='IP:PORT')
 p.add_argument ('-i', '--inflight', help='number of blocks in flight.', type=int, default=20)
 p.add_argument ('-b', '--base', help='data directory', default='/usr/local/caesure', metavar='PATH')
+p.add_argument ('-g', '--getblocks', action='store_true', help='use getblocks rather than getheaders')
 
 G.args = p.parse_args()
 G.args.packet = False
