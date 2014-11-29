@@ -304,10 +304,9 @@ cdef class UTXO_Map:
             fout.write ('%s%4d %r:%r\n' % ('  ' * d, n.level, n.key.encode('hex'), n.amt, n.script))
 
     def new_entry (self, bytes txname, object vals):
-        cdef aa_node new_root
         for index, amt, script in vals:
             self.root = tree_insert (self.root, make_key (txname, index), amt, script)
-        self.length += 1
+        self.length += len(vals)
 
     def pop_utxo (self, bytes txname, int index):
         cdef bytes key = make_key (txname, index)
@@ -317,7 +316,7 @@ cdef class UTXO_Map:
             self.length -= 1
             return f.amt, f.script
         else:
-            raise KeyError
+            raise KeyError ((txname, index))
 
 # -------------------------------------------------------------------
 # This is a straightforward STL version of the map, used just for
