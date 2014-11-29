@@ -43,10 +43,6 @@ class BlockDB:
         self.scan_block_chain (start_scan)
         coro.spawn (self.metadata_thread)
 
-    def get_header (self, name):
-        path = os.path.join ('blocks', name)
-        return open (path).read (80)
-
     metadata_flush_time = 5 * 60 * 60              # five hours
 
     def metadata_thread (self):
@@ -151,6 +147,17 @@ class BlockDB:
         # reopen in append mode
         self.file = open (blocks_path, 'ab')
 
+    def get_header (self, name, size=80):
+        pos = self.blocks[name]
+        self.read_only_file.seek (pos)
+        bsize = self.read_only_file.read (8)
+        bsize, = struct.unpack ('<Q', bsize)
+        header = self.read_only_file.read (size)
+        if len(header) == size:
+            return header
+        else:
+            raise EOFError
+
     def get_block (self, name):
         pos = self.blocks[name]
         self.read_only_file.seek (pos)
@@ -218,7 +225,7 @@ class BlockDB:
             pass
         else:
             self.write_block (name, block)
-            W ('[waking new_block cv]')
+            WM ('[%d]' % (self.block_num[name],))
             self.new_block_cv.wake_all (block)
 
     def write_block (self, name, block):
