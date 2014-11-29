@@ -6,6 +6,38 @@ import random
 
 import coro
 
+# May 2014 fetched from https://github.com/bitcoin/bitcoin/blob/master/src/chainparams.cpp
+dns_seeds = [
+    "seed.bitcoin.sipa.be",
+    "dnsseed.bluematt.me",
+    # down?
+    #"dnsseed.bitcoin.dashjr.org",
+    "seed.bitcoinstats.com",
+    "seed.bitnodes.io",
+    "bitseed.xf2.org",
+]
+
+# really need that pattern match compiler!
+# ipv4 not routable:
+# [10, ...]
+# [192, 168, ...]
+# [172, 16, ...]
+# [169, 254, ...]
+# ipv6 not routable
+# [0xfc, ...] # unique local
+# [0xfd, ...] # unique local
+# [0xfe, 0x80, ...], # (e.g. link) local
+
+def is_routable (addr):
+    SW = addr.startswith
+    if ':' in addr:
+        return not (addr == '::1' or SW ('fc') or SW ('fd') or SW ('fe80:'))
+    else:
+        return not (
+            SW ('127.') or SW ('255.') or SW ('0.') or SW ('10.')
+            or SW ('192.168.') or SW ('172.16.') or SW ('169.254')
+        )
+
 class AddressCache:
 
     def __init__ (self):
