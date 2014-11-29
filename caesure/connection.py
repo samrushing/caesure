@@ -140,9 +140,7 @@ class BaseConnection:
                     if command is None:
                         break
                     self.do_command (command, payload)
-            except OSError:
-                pass
-            except coro.TimeoutError:
+            except (OSError, EOFError, coro.TimeoutError):
                 pass
         finally:
             self.conn.close()
