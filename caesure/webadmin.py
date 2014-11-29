@@ -461,9 +461,10 @@ class handler:
                 parts = host.split (':')
                 if len(parts) == 2:
                     port = int (parts[1])
+                    host = parts[0]
                 else:
                     port = 8333
-                he_addr = (qparts['host'][0], port)
+                he_addr = (host, port)
                 me_addr = get_my_addr (he_addr)
                 bc = Connection (me_addr, he_addr)
         PUSH (H3 ('[note: IPV4 only as of yet]'))
