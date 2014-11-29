@@ -581,3 +581,7 @@ def unpack_alert (bytes data):
     cdef bytes payload = p.unpack_var_str()
     cdef bytes signature = p.unpack_var_str()
     return payload, signature
+
+def unpack_var_int (bytes data):
+    cdef pkt p = pkt (data)
+    return p.unpack_var_int()
