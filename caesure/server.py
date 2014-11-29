@@ -23,27 +23,6 @@ from caesure.addrcache import AddressCache
 
 ticks_to_sec = coro.tsc_time.ticks_to_sec
 
-# really need that pattern match compiler!
-# ipv4 not routable:
-# [10, ...]
-# [192, 168, ...]
-# [172, 16, ...]
-# [169, 254, ...]
-# ipv6 not routable
-# [0xfc, ...] # unique local
-# [0xfd, ...] # unique local
-# [0xfe, 0x80, ...], # (e.g. link) local
-
-def is_routable (addr):
-    SW = addr.startswith
-    if ':' in addr:
-        return not (addr == '::1' or SW ('fc') or SW ('fd') or SW ('fe80:'))
-    else:
-        return not (
-            SW ('127.') or SW ('255.') or SW ('0.') or SW ('10.')
-            or SW ('192.168.') or SW ('172.16.') or SW ('169.254')
-        )
-
 def secs_since (t0):
     return float (coro.now - t0) / coro.ticks_per_sec
 
@@ -57,17 +36,6 @@ def get_random_connection():
         return random.choice (conns)
     else:
         return None
-
-# May 2014 fetched from https://github.com/bitcoin/bitcoin/blob/master/src/chainparams.cpp
-dns_seeds = [
-    "seed.bitcoin.sipa.be",
-    "dnsseed.bluematt.me",
-    # down?
-    #"dnsseed.bitcoin.dashjr.org",
-    "seed.bitcoinstats.com",
-    "seed.bitnodes.io",
-    "bitseed.xf2.org",
-]
 
 class BadState (Exception):
     pass
@@ -231,6 +199,8 @@ class Connection (BaseConnection):
             except OSError:
                 # XXX collect data on errnos
                 G.log ('connection', 'oserror', self.other_addr)
+            except EOFError:
+                G.log ('connection', 'eoferror', self.other_addr)
             except coro.TimeoutError:
                 G.log ('connection', 'timeout', self.other_addr)
         finally:
@@ -333,11 +303,10 @@ class Connection (BaseConnection):
             if to_fetch:
                 self.getdata (to_fetch)
 
-    def get_next_500 (self, start_name, stop_name):
+    def get_next_n (self, start_name, stop_name, n=500):
         db = G.block_db
         height = db.block_num[start_name]
-        height = min (db.last_block, height + 500)
-        W ('walking backward from height %d\n' % (height,))
+        height = min (db.last_block, height + n)
         # find an uncontested starting point
         while 1:
             names = db.num_block[height]
@@ -347,19 +316,16 @@ class Connection (BaseConnection):
                 height -= 1
         # from there, walk the main chain backward
         name = list(names)[0]
-        #W ('walking backward from %r\n' % (name,))
         r = []
         while name != start_name and name != stop_name:
             r.append ((OBJ_BLOCK, name))
             name = db.prev[name]
         # put the names in forward order...
         r.reverse()
-        #W ('done: %d names\n' % (len(r),))
         return r
 
     def cmd_getblocks (self, data):
         version, names = caesure.proto.unpack_getblocks (data)
-        #W ('\ncmd_getblocks: names=%r\n' % (names,))
         hash_stop = names[-1]
         db = G.block_db
         found = None
@@ -367,23 +333,42 @@ class Connection (BaseConnection):
             if db.has_key (name):
                 found = name
                 break
-        #W ('found=%r\n' % (found,))
         if found:
             name = found
-            invs = self.get_next_500 (name, hash_stop)
-            #self.send_invs (invs)
-            # send without filtering, we're getting some kind of getblocks
-            #   wild failure mode otherwise...
-            self.send_packet ('inv', caesure.proto.pack_inv ([]))
+            invs = self.get_next_n (name, hash_stop, 500)
+            self.send_packet ('inv', caesure.proto.pack_inv (invs))
             if invs:
                 self.kick_download = invs[-1][1]
 
+    def cmd_getheaders (self, data):
+        version, names = caesure.proto.unpack_getblocks (data)
+        hash_stop = names[-1]
+        db = G.block_db
+        found = None
+        for name in names:
+            if db.has_key (name):
+                found = name
+                break
+        if found:
+            name = found
+            names = self.get_next_n (name, hash_stop, 2000)
+            data = []
+            for (_, name) in names:
+                header = db.get_header (name, size=85)
+                ntxns = proto.unpack_var_int (header[80:])
+                data.append (header[:80] + proto.pack_var_int (ntxns))
+            data.insert (0, proto.pack_var_int (len (names)))
+            self.send_packet ('headers', ''.join (data))
+
     def cmd_getdata (self, data):
         blocks = []
-        for kind, name in caesure.proto.unpack_getdata (data):
+        pairs = caesure.proto.unpack_getdata (data)
+        for kind, name in pairs:
             if kind == OBJ_BLOCK and name in G.block_db:
                 blocks.append (name)
-        coro.spawn (self.send_blocks, blocks)
+        # out of order a no-no.
+        #coro.spawn (self.send_blocks, blocks)
+        self.send_blocks (blocks)
         
     def send_blocks (self, blocks):
         for name in blocks:
