@@ -34,7 +34,7 @@ cdef class aa_node:
     cdef readonly aa_node l, r
     cdef char[KEYSIZE] k
     cdef readonly uint64_t amt
-    cdef readonly string script
+    cdef readonly bytes script
 
     def __cinit__ (self, int level, aa_node l, aa_node r):
         self.level = level
