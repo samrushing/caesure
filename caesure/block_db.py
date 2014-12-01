@@ -11,12 +11,36 @@ from caesure.ansi import *
 import coro.asn1.python
 import coro.asn1.ber
 
+# pub/sub for new blocks.
+
+class BlockBroker:
+
+    def __init__ (self):
+        self.q = coro.fifo()
+        self.subs = set()
+        coro.spawn (self.fanout_thread)
+
+    def fanout_thread (self):
+        while 1:
+            ob = self.q.pop()
+            for sub in self.subs:
+                sub.push (ob)
+    
+    def subscribe (self):
+        ob = coro.fifo()
+        self.subs.add (ob)
+        return ob
+        
+    def unsubscribe (self, ob):
+        self.subs.remove (ob)
+
+    def publish (self, ob):
+        self.q.push (ob)
+
 # BlockDB file format: (<8 bytes of size> <block>)+
 #
 # Note: this is very close to the bitcoin.dat torrent format, in fact they can be
 #   converted in-place between each other.
-
-# XXX consider mmap
 
 class BlockDB:
 
@@ -31,7 +55,7 @@ class BlockDB:
         self.block_num = {ZERO_NAME: -1}
         self.num_block = {}
         self.last_block = 0
-        self.new_block_cv = coro.condition_variable()
+        self.block_broker = BlockBroker()
         self.file = None
         metadata_path = os.path.join (G.args.base, self.metadata_path)
         if os.path.isfile (metadata_path):
@@ -226,7 +250,7 @@ class BlockDB:
         else:
             self.write_block (name, block)
             WM ('[%d]' % (self.block_num[name],))
-            self.new_block_cv.wake_all (block)
+            self.block_broker.publish (block)
 
     def write_block (self, name, block):
         if self.file is None:

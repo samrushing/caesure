@@ -510,7 +510,7 @@ class TransactionPool:
     def __init__ (self):
         self.missing = {}
         self.pool = {}
-        coro.spawn (self.new_block_thread)
+        coro.spawn (self.pool_block_thread)
 
     def __contains__ (self, name):
         return name in self.pool
@@ -534,9 +534,10 @@ class TransactionPool:
         else:
             G.log ('pool', 'already', str(tx.name))
 
-    def new_block_thread (self):
+    def pool_block_thread (self):
+        q = G.block_db.block_broker.subscribe()
         while 1:
-            b = G.block_db.new_block_cv.wait()
+            b = q.pop()
             in_pool = 0
             total = len(self.pool)
             for tx in b.transactions:
@@ -550,8 +551,9 @@ class TransactionPool:
 # --------------------------------------------------------------------------------
 
 def new_block_thread():
+    q = G.block_db.block_broker.subscribe()
     while 1:
-        block = G.block_db.new_block_cv.wait()
+        block = q.pop()
         name = block.name
         G.log ('block', str(block.name))
         G.recent_blocks.new_block (block)
