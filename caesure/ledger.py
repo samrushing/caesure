@@ -212,15 +212,8 @@ class LedgerState:
             W (' height = %d size = %d ...' % (self.height, size))
             self.block_name = Name (self.block_name)
             n = [0]
-            def gen():
-                while 1:
-                    try:
-                        x = df.read_object()
-                        n[0] += 1
-                        yield x
-                    except EOFError:
-                        break
-            self.outpoints.build (gen(), size)
+            df.next = df.read_object
+            self.outpoints.build (df, size)
             f.close()
             W ('[loaded outpoints %d/%d entries]' % (len(self.outpoints),n[0]))
             W ('\nlast block: %d %064x\n' % (self.height, self.block_name))
