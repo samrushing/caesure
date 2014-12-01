@@ -21,6 +21,7 @@ class BlockBroker:
         coro.spawn (self.fanout_thread)
 
     def fanout_thread (self):
+        # Note: this thread is overkill, just have publish do the fanout.
         while 1:
             ob = self.q.pop()
             for sub in self.subs:
