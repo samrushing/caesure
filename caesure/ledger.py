@@ -206,7 +206,9 @@ class LedgerState:
             f = open (path, 'rb')
             df = DataFileReader (f)
             info = df.read_object()
-            # XXX if we see an older version, pretend it's not there so it will be rebuilt.
+            if info[0] < self.cache_version:
+                W ('old cache version, ignoring...\n')
+                return
             assert (info[0] == self.cache_version)  # version
             [_, self.height, self.block_name, self.total, self.lost, self.fees, size] = info
             W (' height = %d size = %d ...' % (self.height, size))
