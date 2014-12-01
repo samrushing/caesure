@@ -476,7 +476,7 @@ class Connection (BaseConnection):
         if hashes is None:
             hashes = G.block_db.set_for_getblocks()
             if not hashes:
-                hashes = [block_db.genesis_block_hash]
+                hashes = [network.genesis_block_hash]
         hashes.append (block_db.ZERO_NAME)
         chain = [hashes[0]]
         while 1:
