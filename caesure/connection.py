@@ -35,7 +35,7 @@ class BaseConnection:
     # protocol version
     version = 70001
     # software version
-    version_string = '/caesure:201411118/'
+    version_string = '/caesure:20141203/'
     # relay flag (see bip37 for details...)
     relay = False
 
