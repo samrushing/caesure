@@ -223,6 +223,8 @@ cpdef bytes make_push_str (bytes s):
             return chars[OP_1NEGATE]
         else:
             return chars[ls] + s
+    elif ls <= 75:
+        return chars[ls] + s
     elif ls < 0xff:
         # PUSHDATA1
         return b'\x4c' + chars[ls] + s
