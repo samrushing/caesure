@@ -121,6 +121,18 @@ class BlockDB:
         W ('done %.2f secs (last_block=%d)\n' % (t0.end(), self.last_block))
         return max_pos
 
+    def _read_size (self, size):
+        if len(size) == 0:
+            return 0
+        else:
+            size_a, size_b = struct.unpack ('<LL', size)
+            if size_a == 0xd9b4bef9:
+                # bootstrap.dat magic
+                return size_b
+            else:
+                # caesure 64-bit size.
+                return size_a
+
     def scan_block_chain (self, last_pos):
         from caesure.proto import unpack_block_header
         from __main__ import G
@@ -137,11 +149,10 @@ class BlockDB:
         count = 0
         while 1:
             pos = f.tell()
-            size = f.read (8)
+            size = self._read_size (f.read (8))
             if not size:
                 break
             else:
-                size, = struct.unpack ('<Q', size)
                 header = f.read (80)
                 b = caesure.proto.BLOCK()
                 b.unpack (header, True)
@@ -175,8 +186,7 @@ class BlockDB:
     def get_header (self, name, size=80):
         pos = self.blocks[name]
         self.read_only_file.seek (pos)
-        bsize = self.read_only_file.read (8)
-        bsize, = struct.unpack ('<Q', bsize)
+        bsize = self._read_size (self.read_only_file.read (8))
         header = self.read_only_file.read (size)
         if len(header) == size:
             return header
@@ -186,8 +196,7 @@ class BlockDB:
     def get_block (self, name):
         pos = self.blocks[name]
         self.read_only_file.seek (pos)
-        size = self.read_only_file.read (8)
-        size, = struct.unpack ('<Q', size)
+        size = self._read_size (self.read_only_file.read (8))
         block = self.read_only_file.read (size)
         if len(block) == size:
             return block
@@ -258,7 +267,7 @@ class BlockDB:
             self.open_for_append()
         size = len (block.raw)
         pos = self.file.tell()
-        self.file.write (struct.pack ('<Q', size))
+        self.file.write (struct.pack ('<LL', 0xd9b4bef9, size))
         self.file.write (block.raw)
         self.file.flush()
         self.prev[name] = block.prev_block
