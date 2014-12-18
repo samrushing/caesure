@@ -3,7 +3,7 @@
 import os
 import struct
 
-from caesure.script import pprint_script, OPCODES, parse_script, is_unspendable
+from caesure.script import pprint_script, OPCODES, parse_script, is_unspendable, VerifyError
 from caesure.block_db import BlockDB
 from caesure.bitcoin import *
 from caesure.txfaa import UTXO_Map, UTXO_Scan_Map
@@ -239,7 +239,7 @@ class LedgerState:
     def get_utxo (self, name, index):
         return self.outpoints.get_utxo (name, index)
 
-    def feed_tx (self, index, tx, verify=False):
+    def feed_tx (self, index, tx, timestamp, verify=False):
         input_sum = 0
         for j in range (len (tx.inputs)):
             (outpoint, index), script, sequence = tx.inputs[j]
@@ -247,7 +247,7 @@ class LedgerState:
             amt, lock_script = self.outpoints.pop_utxo (outstr, index)
             if verify:
                 try:
-                    tx.verify (j, lock_script, b.timestamp)
+                    tx.verify (j, lock_script, timestamp)
                 except VerifyError:
                     self.outpoints.new_entry (outstr, [(index, amt, lock_script)])
                     raise
@@ -267,7 +267,7 @@ class LedgerState:
         for i, tx in enumerate (b.transactions):
             if i == 0:
                 continue
-            input_sum, output_sum = self.feed_tx (i, tx, verify)
+            input_sum, output_sum = self.feed_tx (i, tx, b.timestamp, verify)
             fees += input_sum - output_sum
             self.total -= input_sum
         self.fees += fees
