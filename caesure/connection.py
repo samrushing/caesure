@@ -131,15 +131,20 @@ class BaseConnection:
     #   of incoming packet processing.
 
     def go (self):
+        rnd = open ('/dev/urandom', 'rb')
         try:
             try:
                 coro.with_timeout (30, self.connect)
                 self.send_version()
                 while 1:
-                    command, payload = self.get_packet()
-                    if command is None:
-                        break
-                    self.do_command (command, payload)
+                    try:
+                        command, payload = coro.with_timeout (60, self.get_packet)
+                        if command is None:
+                            break
+                        self.do_command (command, payload)
+                    except coro.TimeoutError:
+                        self.last_nonce = rnd.read (8)
+                        self.send_packet ('ping', self.last_nonce)
             except (OSError, EOFError, coro.TimeoutError):
                 pass
         finally:
@@ -168,4 +173,7 @@ class BaseConnection:
     def cmd_pong (self, data):
         pass
 
-            
+    def cmd_pong (self, payload):
+        if payload != self.last_nonce:
+            WR ('warning: bad pong %s vs %s.\n' % (payload.encode("hex"), self.last_nonce.encode('hex')))
+            pass
