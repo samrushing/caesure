@@ -76,21 +76,13 @@ def key_to_address (s, version=0):
             break
     return ('1' * pad) + encoded
 
-h160_mask = (1 << (8 * 20)) - 1
-
-def address_to_key (s):
-    n = base58_decode (s)
-    # <version:1><hash:20><check:4>
-    check0 = struct.pack ('>L', n & 0xffffffff)
-    n >>= 32
-    h160 = n & h160_mask
-    n >>= 160
-    v = n
-    h160 = ('%040x' % (h160)).decode ('hex')
-    check1 = dhash (chr(v) + h160)[:4]
-    if check0 != check1:
+def address_to_key (s, version=0):
+    s = ('%050x' % base58_decode (s)).decode ('hex')
+    key, check0 = s[:-4], s[-4:]
+    check1 = dhash (key)[:4]
+    if key[0] != chr(version) or check0 != check1:
         raise BadAddress (s)
-    return v, h160
+    return key[1:]
 
 def compute_rewards (n):
     l = []
