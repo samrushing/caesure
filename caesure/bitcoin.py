@@ -142,7 +142,7 @@ class TX (caesure.proto.TX):
             except ScriptError:
                 redeem = script.encode ('hex')
             D ('%3d %064x:%d %r %d\n' % (i, outpoint, index, redeem, sequence))
-        D ('%d outputs\n' % (len(self.outputs),))
+        D ('outputs: %d\n' % (len(self.outputs),))
         for i in range (len (self.outputs)):
             value, pk_script = self.outputs[i]
             pk_script = pprint_script (parse_script (pk_script))
