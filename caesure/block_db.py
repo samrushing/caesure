@@ -6,10 +6,13 @@ import coro
 import caesure.proto
 
 from caesure.bitcoin import *
-from caesure.ansi import *
 
 import coro.asn1.python
 import coro.asn1.ber
+
+from coro.log import Facility
+
+LOG = Facility ('db')
 
 # pub/sub for new blocks.
 
@@ -78,7 +81,7 @@ class BlockDB:
     def dump_metadata (self):
         from coro.asn1.data_file import DataFileWriter
         from __main__ import G
-        W ('saving metadata...')
+        LOG ('saving metadata', 'start')
         t0 = timer()
         metadata_path = os.path.join (G.args.base, self.metadata_path)
         fileob = open (metadata_path + '.tmp', 'wb')
@@ -91,11 +94,11 @@ class BlockDB:
             )
         fileob.close()
         os.rename (metadata_path + '.tmp', metadata_path)
-        W ('done %.2f secs\n' % (t0.end(),))
+        LOG ('saving metadata', 'stop', t0.end())
 
     def load_metadata (self, fileob):
         from coro.asn1.data_file import DataFileReader
-        W ('reading metadata...')
+        LOG ('loading metadata', 'start')
         t0 = timer()
         max_block = 0
         max_pos = 0
@@ -117,8 +120,8 @@ class BlockDB:
                 max_block = max (max_block, num)
             self.last_block = max_block
         except coro.asn1.ber.DecodeError:
-            W ('error decoding metadata file...\n')
-        W ('done %.2f secs (last_block=%d)\n' % (t0.end(), self.last_block))
+            LOG ('error decoding metadata')
+        LOG ('loading metadata', 'stop', t0.end(), self.last_block)
         return max_pos
 
     def _read_size (self, size):
@@ -140,11 +143,11 @@ class BlockDB:
         if not os.path.isfile (blocks_path):
             open (blocks_path, 'wb').write('')
         f = open (blocks_path, 'rb')
-        W ('reading block headers...')
+        LOG ('scan', 'reading block headers')
         f.seek (0, 2)
         eof_pos = f.tell()
         f.seek (last_pos)
-        W ('starting at pos %r...' % (last_pos,))
+        LOG ('scan', 'start', last_pos)
         t0 = timer()
         count = 0
         while 1:
@@ -168,9 +171,9 @@ class BlockDB:
                 self.blocks[name] = pos
                 self.last_block = max (self.last_block, bn)
                 if count % 1000 == 0:
-                    W ('(%d)' % (bn,))
+                    LOG ('scan', bn)
                 count += 1
-        W ('done. scanned %d blocks in %.02f secs\n' % (count, t0.end()))
+        LOG ('scan', 'done', count, t0.end())
         f.close()
         blocks_path = os.path.join (G.args.base, self.blocks_path)
         self.read_only_file = open (blocks_path, 'rb')
@@ -249,17 +252,17 @@ class BlockDB:
 
     def add (self, name, block):
         if self.blocks.has_key (name):
-            W ('ignoring block we already have: %r\n' % (name,))
+            LOG ('ignoring', 'have', repr(name))
         elif not self.block_num.has_key (block.prev_block) and block.prev_block != ZERO_NAME:
             # if we don't have the previous block, there's no
             #  point in remembering it at all.  toss it.
             # XXX not true.  when we are on an orphaned fork we will see orphans here,
             #   and we need to process them correctly (i.e., set them aside while we
             #   request the prev nodes).
-            pass
+            LOG ('ignoring', 'nochain', repr(name))
         else:
             self.write_block (name, block)
-            WM ('[%d]' % (self.block_num[name],))
+            LOG ('add', repr(name), self.block_num[name])
             self.block_broker.publish (block)
 
     def write_block (self, name, block):

@@ -16,10 +16,12 @@ from caesure import ledger
 from caesure import proto
 from caesure import script
 from caesure.bitcoin import *
-from caesure.ansi import *
 from caesure.asn1_log import ASN1_Logger
 from caesure.connection import BaseConnection, parse_addr_arg
 from caesure.addrcache import AddressCache
+
+from coro.log import Facility
+LOG = Facility ('server')
 
 ticks_to_sec = coro.tsc_time.ticks_to_sec
 
@@ -83,10 +85,10 @@ class BlockHoover:
         try:
             self.running = True
             # get the list of all blocks we need to fetch...
-            G.log ('getheaders', 'start')
+            LOG ('getheaders', 'start')
             t0 = block_db.timer()
             names = c.getheaders()
-            G.log ('getheaders', 'stop', '%.02f' % t0.end())
+            LOG ('getheaders', 'stop', '%.02f' % t0.end())
             if names:
                 # start fetching them...
                 coro.spawn (self.drain_queue_thread)
@@ -105,7 +107,7 @@ class BlockHoover:
             if name is None:
                 break
             else:
-                G.log ('hoover', 'popped', str(name))
+                LOG ('hoover', 'popped', str(name))
                 self.qset.remove (name)
                 c = self.get_live_connection()
                 coro.spawn (self.get_block, c, name)
@@ -115,18 +117,18 @@ class BlockHoover:
             self.requested.add (name)
             strname = str(name)
             t0 = coro.now_usec
-            G.log ('hoover', 'asked', strname)
+            LOG ('hoover', 'asked', strname)
             block = conn.get_block (name)
             self.in_flight_sem.release(1)
             self.add_block (block)
-            G.log ('hoover', 'recv', strname)
+            LOG ('hoover', 'recv', strname)
         except coro.TimeoutError:
             # let some other connection try it...
-            G.log ('hoover', 'retry', strname)
+            LOG ('hoover', 'retry', strname)
             self.push (name)
             self.requested.remove (name)
         except:
-            G.log ('hoover', 'error', coro.compact_traceback())
+            LOG ('hoover', 'error', coro.compact_traceback())
 
     def add_block (self, b):
         self.ready[b.prev_block] = b
@@ -150,7 +152,7 @@ class BlockHoover:
         try:
             b.check_rules()
         except BadState as reason:
-            G.log ('block_to_db', 'bad block', str(name), reason)
+            LOG ('block_to_db', 'bad block', str(name), reason)
         else:
             G.block_db.add (name, b)
             G.recent_blocks.new_block (b)
@@ -185,7 +187,7 @@ class Connection (BaseConnection):
                 return
             else:
                 G.connection_map[self.other_addr] = self
-            G.log ('connect', self.direction, self.my_addr, self.other_addr)
+            LOG ('connect', self.direction, self.my_addr, self.other_addr)
             try:
                 if self.direction == 'outgoing':
                     coro.with_timeout (30, self.connect)
@@ -198,13 +200,13 @@ class Connection (BaseConnection):
                     self.last_packet = coro.now
             except OSError:
                 # XXX collect data on errnos
-                G.log ('connection', 'oserror', self.other_addr)
+                LOG ('connection', 'oserror', self.other_addr)
             except EOFError:
-                G.log ('connection', 'eoferror', self.other_addr)
+                LOG ('connection', 'eoferror', self.other_addr)
             except coro.TimeoutError:
-                G.log ('connection', 'timeout', self.other_addr)
+                LOG ('connection', 'timeout', self.other_addr)
         finally:
-            G.log ('stopped', self.direction, self.my_addr, self.other_addr)
+            LOG ('stopped', self.direction, self.my_addr, self.other_addr)
             del G.connection_map[self.other_addr]
             if self.direction == 'incoming':
                 G.in_conn_sem.release (1)
@@ -240,18 +242,18 @@ class Connection (BaseConnection):
             try:
                 method = getattr (self, 'cmd_%s' % cmd,)
             except AttributeError:
-                G.log ('connection', 'unknown_command', cmd)
+                LOG ('connection', 'unknown_command', cmd)
             else:
                 try:
                     method (data)
                 except:
-                    G.log ('connection', 'error', cmd, coro.compact_traceback())
+                    LOG ('connection', 'error', cmd, coro.compact_traceback())
         else:
-            G.log ('connection', 'bad_command', cmd)
+            LOG ('connection', 'bad_command', cmd)
 
     def cmd_version (self, data):
         # XXX sanity check this data
-        G.log ('version', data)
+        LOG ('version', data)
         self.other_version = caesure.proto.unpack_version (data)
         self.send_packet ('verack', '')
         G.hoover.notify_height (self, self.other_version.start_height)
@@ -387,7 +389,7 @@ class Connection (BaseConnection):
                 except KeyError:
                     pass
                 self.send_invs ([key])
-                W ('sent kick for %r\n' % (last_name,))
+                LOG ('kick', repr(last_name))
 
     def cmd_getaddr (self, data):
         # XXX we should have a thread do this once a minute or so, precomputed.
@@ -456,7 +458,7 @@ class Connection (BaseConnection):
     def cmd_alert (self, data):
         payload, signature = caesure.proto.unpack_alert (data)
         # XXX verify signature
-        G.log ('alert', signature, payload)
+        LOG ('alert', signature, payload)
 
     def cmd_headers (self, data):
         pass
@@ -492,7 +494,7 @@ class Connection (BaseConnection):
                     if block.prev_block == chain[-1]:
                         chain.append (block.name)
                     else:
-                        G.log ('getheaders', 'nochain')
+                        LOG ('getheaders', 'nochain')
                         return []
                 hashes[0] = chain[-1]
         # we already have chain[0]
@@ -516,7 +518,6 @@ class TransactionPool:
         return name in self.pool
 
     def add (self, tx):
-        W ('TransactionPool.add() called and ignored\n')
         return 
         if tx.name not in self.pool:
             try:
@@ -527,12 +528,12 @@ class TransactionPool:
                     i += 1
                 self.pool[tx.name] = tx
             except script.ScriptFailure:
-                G.log ('pool', 'script failure', str(tx.name))
+                LOG ('pool', 'script failure', str(tx.name))
             except KeyError:
-                G.log ('pool', 'missing inputs', str(tx.name))
+                LOG ('pool', 'missing inputs', str(tx.name))
                 self.missing[tx.name] = tx
         else:
-            G.log ('pool', 'already', str(tx.name))
+            LOG ('pool', 'already', str(tx.name))
 
     def pool_block_thread (self):
         q = G.block_db.block_broker.subscribe()
@@ -546,7 +547,7 @@ class TransactionPool:
                     in_pool += 1
                 except KeyError:
                     pass
-            G.log ('pool', 'removed', in_pool, total)
+            LOG ('pool', 'removed', in_pool, total)
 
 # --------------------------------------------------------------------------------
 
@@ -555,7 +556,7 @@ def new_block_thread():
     while 1:
         block = q.pop()
         name = block.name
-        G.log ('block', str(block.name))
+        LOG ('block', str(block.name))
         G.recent_blocks.new_block (block)
         if not G.hoover.running:
             nsent = 0
@@ -606,8 +607,7 @@ def serve (addr):
         s = coro.tcp_sock()
     s.bind (addr0)
     s.listen (100)
-    W ('starting server on %r\n' % (addr0,))
-    G.log ('server', 'start', addr0)
+    LOG ('starting', addr0)
     while 1:
         conn, addr1 = s.accept()
         G.in_conn_sem.acquire (1)
@@ -632,23 +632,31 @@ def connect (addr):
     Connection (addr0, addr1)
 
 def exception_notifier():
-    me = coro.current()
-    traceback = coro.compact_traceback()
-    G.log ('exception', me.id, me.name, traceback)
-    WY ('exception: %r %r %r\n' % (me.id, me.name, traceback))
+    LOG.exc()
+
+import coro.http
+import coro.backdoor
+import caesure.webadmin
+import zlib
 
 def go (args, global_state):
     global G
     G = global_state
     G.args = args
-    G.logger = ASN1_Logger (
-        open (os.path.join (G.args.base, 'log.asn1'), 'ab')
-        )
-    G.log = G.logger.log
-    # needed for the sub-imports below...
-    import coro
+
+    if args.testnet:
+        network.goto_testnet()
+
+    if args.logfile:
+        logger = coro.log.asn1.Logger (open (args.logfile, 'ab'))
+    else:
+        logger = coro.log.StderrLogger()
+
+    coro.log.set_logger (logger)
+    coro.log.redirect_stderr()
+
     coro.set_exception_notifier (exception_notifier)
-    G.log ('starting caesure')
+    LOG ('starting caesure')
     G.addr_cache = AddressCache()
     G.block_db = block_db.BlockDB (read_only=False)
     G.hoover = BlockHoover()
@@ -659,25 +667,21 @@ def go (args, global_state):
     # install a real resolver
     coro.dns.cache.install()
     if args.monitor:
-        import coro.backdoor
-        coro.spawn (coro.backdoor.serve, unix_path='/tmp/caesure.bd')
+        coro.spawn (coro.backdoor.serve, unix_path=network.BD_FILE)
     users = {}
     if args.user:
         for user in args.user:
             u, p = user.split (':')
             users[u] = p
     if args.webui:
-        import coro.http
-        import caesure.webadmin
-        import zlib
         G.http_server = h = coro.http.server()
         G.webadmin_handler = caesure.webadmin.handler (G)
         if users:
             h.push_handler (coro.http.handlers.auth_handler (users, G.webadmin_handler))
-            coro.spawn (h.start, (('', 8380)))
+            coro.spawn (h.start, (('', network.ADMIN_PORT)))
         else:
             h.push_handler (G.webadmin_handler)
-            coro.spawn (h.start, (('127.0.0.1', 8380)))
+            coro.spawn (h.start, (('127.0.0.1', network.ADMIN_PORT)))
         h.push_handler (coro.http.handlers.coro_status_handler())
         h.push_handler (
             coro.http.handlers.favicon_handler (

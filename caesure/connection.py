@@ -7,8 +7,11 @@ import time
 
 import coro
 from caesure.bitcoin import dhash, network
-from caesure.ansi import *
 from caesure.proto import VERSION, pack_inv, unpack_version
+
+from coro.log import Facility
+
+LOG = Facility ('conn')
 
 def make_nonce():
     return random.randint (0, 1 << 64)
@@ -82,7 +85,7 @@ class BaseConnection:
             if self.packet:
                 self.log ('send', self.other_addr, command, payload)
             if self.verbose and command not in ('ping', 'pong'):
-                WT (' ' + command)
+                LOG ('=>', command)
 
     def get_our_block_height (self):
         return 0
@@ -116,7 +119,7 @@ class BaseConnection:
         magic, command, length, checksum = struct.unpack ('<I12sII', data)
         command = command.strip ('\x00')
         if self.verbose and command not in ('ping', 'pong'):
-            WF (' ' + command)
+            LOG ('<=', command)
         self.packet_count += 1
         self.header = magic, command, length
         if length:
@@ -158,7 +161,7 @@ class BaseConnection:
             method = getattr (self, 'cmd_%s' % cmd,)
             method (data)
         else:
-            W ('connection: bad command %r\n' % (cmd,))
+            LOG ('unknown command', cmd, data)
 
     def cmd_version (self, data):
         self.other_version = unpack_version (data)
@@ -175,5 +178,4 @@ class BaseConnection:
 
     def cmd_pong (self, payload):
         if payload != self.last_nonce:
-            WR ('warning: bad pong %s vs %s.\n' % (payload.encode("hex"), self.last_nonce.encode('hex')))
-            pass
+            LOG ('bad pong', payload, self.last_nonce)

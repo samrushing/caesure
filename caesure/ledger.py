@@ -2,6 +2,8 @@
 
 import os
 import struct
+from pprint import pprint as pp
+import sys
 
 from caesure.script import pprint_script, OPCODES, parse_script, is_unspendable, VerifyError
 from caesure.block_db import BlockDB
@@ -9,12 +11,8 @@ from caesure.bitcoin import *
 from caesure.txfaa import UTXO_Map, UTXO_Scan_Map
 
 import coro
-
-from pprint import pprint as pp
-
-import sys
-
-W = sys.stderr.write
+from coro.log import Facility
+LOG = Facility ('ledger')
 
 class RecentBlocks:
 
@@ -44,13 +42,13 @@ class RecentBlocks:
                 self.new_block (G.block_db[block.prev_block], verify)
                 self.new_block (block, verify)
             elif height <= (self.highest - self.horizon):
-                G.log ('recent', 'stale', height, str(block.name), str(block.prev_block))
+                LOG ('recent', 'stale', height, str(block.name), str(block.prev_block))
             else:
-                G.log ('recent', 'nochain', height, str(block.name), str(block.prev_block))
+                LOG ('recent', 'nochain', height, str(block.name), str(block.prev_block))
         else:
             t0 = timer()
             self.blocks[block.name] = tip.extend (block, tip.height + 1, verify)
-            W ('[tip.extend %0.2f]' % (t0.end(),))
+            LOG ('extend', t0.end())
             if len(self.blocks) > 2:
                 # otherwise we are in 'catch up' mode.
                 self.trim()
@@ -193,35 +191,35 @@ class LedgerState:
                 coro.yield_slice()
         f.close()
         os.rename (save_path + '.tmp', save_path)
-        W ('[saved outpoints %d/%d entries %.02fs]' % (len(self.outpoints), n, t0.end()))
+        LOG ('saved outpoints', len(self.outpoints), n, t0.end())
 
     def load_state (self, path=None):
         from coro.asn1.data_file import DataFileReader
         from __main__ import G
         if path is None:
             path = os.path.join (G.args.base, self.save_path)
-        W ('loading outpoints cache...')
+        LOG ('cache', 'start')
         t0 = timer()
         try:
             f = open (path, 'rb')
             df = DataFileReader (f)
             info = df.read_object()
             if info[0] < self.cache_version:
-                W ('old cache version, ignoring...\n')
+                LOG ('old cache version, ignoring')
                 return
             assert (info[0] == self.cache_version)  # version
             [_, self.height, self.block_name, self.total, self.lost, self.fees, size] = info
-            W (' height = %d size = %d ...' % (self.height, size))
+            LOG ('cache', self.height, size)
             self.block_name = Name (self.block_name)
             n = [0]
             df.next = df.read_object
             self.outpoints.build (df, size)
             f.close()
-            W ('[loaded outpoints %d/%d entries]' % (len(self.outpoints),n[0]))
-            W ('\nlast block: %d %064x\n' % (self.height, self.block_name))
+            LOG ('cache', 'stop', len(self.outpoints), n[0])
+            LOG ('cache', self.height, repr(self.block_name))
         except IOError:
             pass
-        W ('...done (%.2fs)\n' % (t0.end(),))
+        LOG ('cache', 'stop', t0.end())
 
     def store_outputs (self, tx):
         output_sum = 0
@@ -307,7 +305,7 @@ def catch_up (G):
     ledger = LedgerState (load=True)
 
     if len(ledger.outpoints) == 0:
-        W ('no outpoints cache.  performing fast scan [30-45 minutes]\n')
+        LOG ('no cache')
         ledger.outpoints = UTXO_Scan_Map()
         fast_scan = True
     else:
@@ -325,40 +323,35 @@ def catch_up (G):
     for name in most_names:
         if i == ledger.height + 1:
             if i % 1000 == 0:
-                W('%d ' % (i,))
+                LOG ('scan', i)
             block = db[name]
             ledger.feed_block (block, i)
             fed += 1
         elif i <= ledger.height:
             pass
         else:
-            W('oops, block too high?\n')
-            import pdb
-            pdb.set_trace()
+            LOG ('block too high?')
+            import pdb; pdb.set_trace()
         i += 1
         coro.yield_slice()
 
-    W('\n')
-    W('       total=%20s\n' % bcrepr(ledger.total + ledger.lost))
-    W('        live=%20s\n' % bcrepr(ledger.total))
-    W('        lost=%20s\n' % bcrepr(ledger.lost))
-    W('        fees=%20s\n' % bcrepr(ledger.fees))
-    W('(%.2fs to scan %d blocks into ledger)\n' % (t0.end(), fed))
+    LOG ('total/lost/fees', ledger.total, ledger.lost, ledger.fees)
+    LOG ('scan', t0.end(), fed)
     if fed > 150:
-        W ('saving... ledger.block_name = %064x\n' % (ledger.block_name,))
+        LOG ('saving', repr(ledger.block_name))
         ledger.save_state()
     if fast_scan:
-        W ('done with fast scan, reloading...\n')
+        LOG ('fast scan done, reloading')
         ledger.outpoints = None
         ledger.outpoints = UTXO_Map()
         ledger.load_state()
 
-    W ('topping off recent_blocks...\n')
+    LOG ('topping off recent blocks')
     G.recent_blocks = RecentBlocks (ledger, db)
     names = db.next (ledger.block_name)
     while names:
         name = names.pop()
-        W ('adding %r\n' % (name,))
+        LOG ('add', repr(name))
         G.recent_blocks.new_block (db[name])
         names += db.next (name)
 

@@ -6,6 +6,9 @@ import random
 
 import coro
 
+from coro.log import Facility
+LOG = Facility ('addrcache')
+
 # May 2014 fetched from https://github.com/bitcoin/bitcoin/blob/master/src/chainparams.cpp
 dns_seeds = [
     "seed.bitcoin.sipa.be",
@@ -63,7 +66,7 @@ class AddressCache:
         save_path = os.path.join (G.args.base, self.save_path)
         try:
             self.cache = pickle.load (open (save_path, 'rb'))
-            G.log ('address-cache', 'load', len(self.cache))
+            LOG ('load', len(self.cache))
         except IOError:
             pass
         if not self.cache:
@@ -91,7 +94,7 @@ class AddressCache:
 
     def seed (self):
         # called only when we don't have a cached peer set.
-        G.log ('dns', 'seeding...')
+        LOG ('dns', 'seeding')
         timestamp = coro.tsc_time.now_raw_posix_sec()
         r = coro.get_resolver()
         addrs = set()
