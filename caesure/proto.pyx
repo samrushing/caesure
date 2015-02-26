@@ -585,3 +585,11 @@ def unpack_alert (bytes data):
 def unpack_var_int (bytes data):
     cdef pkt p = pkt (data)
     return p.unpack_var_int()
+
+def unpack_reject (bytes data):
+    cdef pkt p = pkt (data)
+    cdef bytes message = p.unpack_var_str()
+    cdef uint8_t ccode = p.u8()
+    cdef bytes reason = p.unpack_var_str()
+    cdef bytes rdata = p.remains()
+    return message, ccode, reason, rdata
