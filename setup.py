@@ -13,9 +13,6 @@ exts = [
 import os
 
 if os.path.isfile ('/usr/local/lib/libsecp256k1.a'):
-    if os.uname()[0] == 'Darwin':
-        # needed for -rpath to work.
-        os.environ['MACOSX_DEPLOYMENT_TARGET'] = '10.9'
     exts.append (
         Extension (
             "caesure.secp256k1",
@@ -50,5 +47,5 @@ setup (
     install_requires = ['cython>=0.20.2'],
     license          = 'Simplified BSD',
     cmdclass = {'build_ext': build_ext},
-    scripts = ['scripts/caesure', 'scripts/catlog'],
+    scripts = ['scripts/caesure'],
 )
