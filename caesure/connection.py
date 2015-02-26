@@ -7,7 +7,7 @@ import time
 
 import coro
 from caesure.bitcoin import dhash, network
-from caesure.proto import VERSION, pack_inv, unpack_version
+from caesure.proto import VERSION, pack_inv, unpack_version, unpack_reject
 
 from coro.log import Facility
 
@@ -179,3 +179,7 @@ class BaseConnection:
     def cmd_pong (self, payload):
         if payload != self.last_nonce:
             LOG ('bad pong', payload, self.last_nonce)
+
+    def cmd_reject (self, payload):
+        message, ccode, reason, data = unpack_reject (payload)
+        LOG ('reject', message, ccode, reason, data)
