@@ -107,7 +107,7 @@ class BlockHoover:
             if name is None:
                 break
             else:
-                LOG ('hoover', 'popped', str(name))
+                LOG ('hoover', 'popped', repr(name))
                 self.qset.remove (name)
                 c = self.get_live_connection()
                 coro.spawn (self.get_block, c, name)
@@ -115,7 +115,7 @@ class BlockHoover:
     def get_block (self, conn, name):
         try:
             self.requested.add (name)
-            strname = str(name)
+            strname = repr(name)
             t0 = coro.now_usec
             LOG ('hoover', 'asked', strname)
             block = conn.get_block (name)
@@ -152,7 +152,7 @@ class BlockHoover:
         try:
             b.check_rules()
         except BadState as reason:
-            LOG ('block_to_db', 'bad block', str(name), reason)
+            LOG ('block_to_db', 'bad block', repr(name), reason)
         else:
             G.block_db.add (name, b)
             G.recent_blocks.new_block (b)
@@ -528,12 +528,12 @@ class TransactionPool:
                     i += 1
                 self.pool[tx.name] = tx
             except script.ScriptFailure:
-                LOG ('pool', 'script failure', str(tx.name))
+                LOG ('pool', 'script failure', repr(tx.name))
             except KeyError:
-                LOG ('pool', 'missing inputs', str(tx.name))
+                LOG ('pool', 'missing inputs', repr(tx.name))
                 self.missing[tx.name] = tx
         else:
-            LOG ('pool', 'already', str(tx.name))
+            LOG ('pool', 'already', repr(tx.name))
 
     def pool_block_thread (self):
         q = G.block_db.block_broker.subscribe()
@@ -556,7 +556,7 @@ def new_block_thread():
     while 1:
         block = q.pop()
         name = block.name
-        LOG ('block', str(block.name))
+        LOG ('block', repr(block.name))
         G.recent_blocks.new_block (block)
         if not G.hoover.running:
             nsent = 0
