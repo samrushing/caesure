@@ -634,35 +634,31 @@ def connect (addr):
 def exception_notifier():
     LOG.exc()
 
+# --- daemonize ---
+# this will be in shrapnel soon.
+from ctypes import cdll, util
+libc = cdll.LoadLibrary (util.find_library ('libc'))
+
+def daemonize (nochdir=1, noclose=0):
+    libc.daemon (nochdir, noclose)
+# -----------------
+
+import pwd
+def become (username):
+    os.setuid (pwd.getpwnam(username).pw_uid)
+
 import coro.http
 import coro.backdoor
 import caesure.webadmin
 import zlib
 
-def go (args, global_state):
-    global G
-    G = global_state
-    G.args = args
-
-    if args.testnet:
-        network.goto_testnet()
-
-    if args.logfile:
-        logger = coro.log.asn1.Logger (open (args.logfile, 'ab'))
-    else:
-        logger = coro.log.StderrLogger()
-
-    coro.log.set_logger (logger)
-    coro.log.redirect_stderr()
-
-    coro.set_exception_notifier (exception_notifier)
-    LOG ('starting caesure')
+def main1 (args, G):
+    G.verbose = args.verbose
     G.addr_cache = AddressCache()
     G.block_db = block_db.BlockDB (read_only=False)
     G.hoover = BlockHoover()
     G.txn_pool = TransactionPool()
     G.recent_blocks = ledger.catch_up (G)
-    G.verbose = args.verbose
     G.connection_map = {}
     # install a real resolver
     coro.dns.cache.install()
@@ -702,3 +698,39 @@ def go (args, global_state):
     coro.spawn (new_block_thread)
     coro.spawn (new_connection_thread)
     coro.spawn (G.recent_blocks.save_ledger_thread)
+    
+def main (args, global_state):
+    global G
+
+    G = global_state
+    G.args = args
+
+    if args.testnet:
+        network.goto_testnet()
+
+    if args.logfile:
+        logger = coro.log.asn1.Logger (open (args.logfile, 'ab'))
+    else:
+        logger = coro.log.StderrLogger()
+
+    coro.log.set_logger (logger)
+    coro.log.redirect_stderr()
+
+    if args.daemon:
+        if not args.logfile:
+            raise ValueError ("--daemon without --logfile")
+        else:
+            daemonize()
+            open('/var/run/caesure.pid', 'wb').write ('%d\n' % os.getpid())
+
+    coro.set_exception_notifier (exception_notifier)
+    LOG ('caesure', 'starting')
+
+    coro.spawn (main1, args, G)
+
+    try:
+        coro.event_loop()
+    except:
+        LOG.exc()
+    finally:
+        LOG ('caesure', 'stopping')
