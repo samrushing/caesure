@@ -500,7 +500,7 @@ class handler:
             PUSH (elemz ('br'))
         PUSH (H2 ('trailing ledger (at horizon)'))
         PUSH (ledger_table (oldest))
-        db = G.block_db
+        db = self.G.block_db
         values = r.blocks.values()
         values.sort (lambda a,b: cmp (b.height, a.height))
         PUSH (H2 ('RecentBlocks.blocks'))
