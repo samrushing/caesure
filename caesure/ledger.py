@@ -52,7 +52,7 @@ class RecentBlocks:
             if len(self.blocks) > 2:
                 # otherwise we are in 'catch up' mode.
                 self.trim()
-        
+
     def find_lowest_common_ancestor (self, leaves, db):
         # find the lowest common ancestor of <leaves>.
         # http://en.wikipedia.org/wiki/Lowest_common_ancestor
@@ -103,7 +103,7 @@ class RecentBlocks:
             # if the lca is behind the horizon, we must keep it.
             cutoff = lca.height
             self.root = lca
-            G.log ('lca cutoff', str(lca.block_name))
+            LOG ('ancestor cutoff', repr(lca.block_name))
         else:
             # lca is inside the horizon: crawl back til we hit the cutoff.
             root = lca
