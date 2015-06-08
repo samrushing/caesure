@@ -286,9 +286,9 @@ class handler:
             PUSH (elemz ('br'))
         PUSH (H2 ('connections'))
         PUSH (autotable ([
-            ('in_conn_sem.avail', G.in_conn_sem.avail),
-            ('out_conn_sem.avail', G.out_conn_sem.avail),
-            ('|connections|', len(G.connection_map)),
+            ('in_conn_sem.avail', self.G.in_conn_sem.avail),
+            ('out_conn_sem.avail', self.G.out_conn_sem.avail),
+            ('|connections|', len(self.G.connection_map)),
             ])
         )
 
