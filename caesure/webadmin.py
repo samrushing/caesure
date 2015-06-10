@@ -513,12 +513,14 @@ class handler:
         PUSH (''.join (r))
         PUSH (elem1 ('table'))
 
+    def do_shutdown (self):
+        coro.sleep_relative (5)
+        coro.set_exit()
+
     def cmd_shutdown (self, request, PUSH, parts):
         request.push (H3 ('Shutting down...'))
         request.done()
-        coro.sleep_relative (1)
-        coro.set_exit()
-
+        coro.spawn (self.do_shutdown)
 
 def chain_gen (name):
     from __main__ import G
