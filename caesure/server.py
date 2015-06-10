@@ -371,7 +371,7 @@ class Connection (BaseConnection):
         # out of order a no-no.
         #coro.spawn (self.send_blocks, blocks)
         self.send_blocks (blocks)
-        
+
     def send_blocks (self, blocks):
         for name in blocks:
             self.send_packet (
@@ -399,7 +399,7 @@ class Connection (BaseConnection):
         nodes = G.connection_map.values()
         random.shuffle (nodes)
         for v in nodes:
-            if v is not self and secs_since (v.last_packet) < three_hours:
+            if (v is not self) and (v.other_version is not None) and secs_since (v.last_packet) < three_hours:
                 r.append ((
                     ticks_to_sec (v.last_packet),
                     (v.other_version.services, v.other_addr)
@@ -500,6 +500,10 @@ class Connection (BaseConnection):
         # we already have chain[0]
         return chain[1:]
 
+    def cmd_mempool (self, data):
+        # TBD
+        pass
+
 # --------------------------------------------------------------------------------
 
 # XXX This is just a placeholder for now.  I'm fairly certain that we'll need
@@ -518,7 +522,7 @@ class TransactionPool:
         return name in self.pool
 
     def add (self, tx):
-        return 
+        return
         if tx.name not in self.pool:
             try:
                 i = 0
@@ -698,7 +702,7 @@ def main1 (args, G):
     coro.spawn (new_block_thread)
     coro.spawn (new_connection_thread)
     coro.spawn (G.recent_blocks.save_ledger_thread)
-    
+
 def main (args, global_state):
     global G
 
