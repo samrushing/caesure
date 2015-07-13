@@ -375,6 +375,9 @@ cpdef bytes pack_inv (list items):
         r.append (n.name[:32])
     return b''.join (r)
 
+cpdef bytes pack_var_str (bytes s):
+    return pack_var_int (len(s)) + s
+
 cdef class TX:
     cdef public uint32_t version
     cdef public uint32_t lock_time
