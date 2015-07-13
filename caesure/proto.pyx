@@ -521,6 +521,13 @@ def make_tx (bytes data):
     tx.unpack (data)
     return tx
 
+def unpack_output (data):
+    cdef pkt p = pkt (data)
+    cdef uint64_t value = p.u64()
+    cdef uint64_t pk_script_length = p.unpack_var_int()
+    cdef bytes script = p.unpack_str (pk_script_length)
+    return (value, script)
+
 def unpack_version (bytes data):
     v = VERSION()
     v.unpack (data)
