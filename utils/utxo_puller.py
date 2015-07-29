@@ -1,30 +1,21 @@
 #!/usr/bin/env python
 # -*- Mode: Python; indent-tabs-mode: nil -*-
 
-# pull a copy of the blockchain from a (hopefully) local node.
+# build/refresh a utxo database directly from a local (full-blockchain) node.
 
-# $ lpython chain_puller.py -b /Volumes/drive3/caesure/ 127.0.0.1:8333
-# reading block headers...starting at pos 0...done. scanned 0 blocks in 0.00 secs
-# 2:	Wed Nov 26 15:25:50 2014 Backdoor started on unix socket /tmp/chainpuller.bd
-# log: connect (('127.0.0.1', 8333),)
-# downloading headers...
-# got 331756 names...
-# [BLOCKNUM] (MB/s)
-# (0.02)[1000][2000][3000][4000][5000](0.11)[6000][7000][8000][9000][10000]...
-# ...[316000][317000](33.41)[318000](33.42)[319000][320000](32.94)[321000](34.02)
-# [322000](34.79)[323000][324000](34.31)[325000](33.86)[326000](35.49)[327000]
-# (34.11)[328000](33.21)[329000][330000](35.55)[331000](31.43)
-# transferred 24.96 GB in 1239 secs (20.62 MB/s)
+# $ lpython utxo_puller.py -b /Volumes/drive3/caesure/ 127.0.0.1:8333
 
-# Note: on OS X, if you are running bitcoin-qt, it's very important that you keep
-#  it in the foreground, otherwise the xfer rate will fall dramatically.
-
-# It's safe to stop and restart this utility.
+# as of Jul 2015, this can build a new utxo db directly from another node
+#   in about 50 minutes.
 
 import argparse
-
+import os
 import coro
 import time
+
+from coro.log import NoFacility
+
+LOG = NoFacility ()
 
 from caesure.ansi import *
 from caesure.connection import BaseConnection, parse_addr_arg
@@ -32,12 +23,20 @@ from caesure.global_state import GlobalState
 from caesure.proto import unpack_version, unpack_inv, unpack_headers, pack_getblocks
 from caesure.bitcoin import *
 from caesure.block_db import BlockDB, BLOCK
+from caesure._utxo_scan import UTXO_Scan_Map
+from caesure._utxo import UTXO_Map
+from caesure.utxo.ldb import UTXO_leveldb
+from caesure.ledger import LedgerState
 
-class ChainPuller (BaseConnection):
+class UTXO_Puller (BaseConnection):
+
+    packet = True
 
     def __init__ (self, G, my_addr, other_addr):
         BaseConnection.__init__ (self, my_addr, other_addr, verbose=G.verbose)
         self.waiting = {}
+        self.G = G
+        self.log_fun = G.log
 
     def wait_for (self, key):
         "wait on a CV with <key> (used by get_block, etc...)"
@@ -48,19 +47,15 @@ class ChainPuller (BaseConnection):
         finally:
             del self.waiting[key]
 
-    def getheaders (self, hashes=None):
+    def getheaders (self, hashes):
         # on this connection only, download the entire chain of headers from our
         #   tip to the other side's tip.
-        if hashes is None:
-            hashes = G.block_db.set_for_getblocks()
-            if not hashes:
-                hashes = [network.genesis_block_hash]
         hashes.append (ZERO_NAME)
         chain = [hashes[0]]
         while 1:
             # getheaders and getblocks have identical args/layout.
             self.send_packet ('getheaders', pack_getblocks (self.version, hashes))
-            _, data = coro.with_timeout (30, self.wait_for, 'headers')
+            _, data = coro.with_timeout (90, self.wait_for, 'headers')
             blocks = unpack_headers (data)
             if len(blocks) == 0:
                 break
@@ -69,28 +64,8 @@ class ChainPuller (BaseConnection):
                     if block.prev_block == chain[-1]:
                         chain.append (block.name)
                     else:
-                        G.log ('getheaders', 'nochain')
+                        self.G.log ('getheaders', 'nochain')
                         return []
-                hashes[0] = chain[-1]
-        return chain
-
-    def getblocks (self, hashes=None):
-        if hashes is None:
-            hashes = G.block_db.set_for_getblocks()
-            if not hashes:
-                hashes = [network.genesis_block_hash]
-        hashes.append (ZERO_NAME)
-        chain = [hashes[0]]
-        while 1:
-            # getheaders and getblocks have identical args/layout.
-            self.send_packet ('getblocks', pack_getblocks (self.version, hashes))
-            _, data = coro.with_timeout (30, self.wait_for, 'inv')
-            pairs = unpack_inv (data)
-            if len(pairs) == 0:
-                break
-            else:
-                for kind, name in pairs:
-                    chain.append (name)
                 hashes[0] = chain[-1]
         return chain
 
@@ -103,7 +78,17 @@ class ChainPuller (BaseConnection):
         pass
 
     def cmd_block (self, payload):
-        block_fifo.push (payload)
+        global in_flight, total_bytes
+        total_bytes += len(payload)
+        in_flight -= 1
+        if in_flight < G.args.inflight:
+            in_flight_cv.wake_all()
+        b = BLOCK()
+        b.unpack (payload)
+        lx = self.G.ledger
+        lx.feed_block (b, lx.height + 1)
+        if lx.height % 1000 == 0:
+            WB ('[%d]' % lx.height)
 
     def cmd_tx (self, payload):
         pass
@@ -121,26 +106,40 @@ class ChainPuller (BaseConnection):
         # newer bitcoind asks for these upon connection. ignore.
         pass
 
+# mainnet genesis (XXX support testnet)
+genesis = BLOCK()
+genesis.unpack (
+    '0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd'
+    '7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c'
+    '0101000000010000000000000000000000000000000000000000000000000000000000000000ffff'
+    'ffff4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c'
+    '6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73'
+    'ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a6'
+    '7962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f'
+    'ac00000000'.decode ('hex')
+)
+
 MB = 1024 * 1024
 GB = 1024 * MB
 
-def go (G):
+def pull_blocks (G):
     global in_flight
     addr0 = ('127.0.0.1', 0)
     addr1 = parse_addr_arg (G.args.connect)
-    cp = ChainPuller (G, addr0, addr1)
+    cp = UTXO_Puller (G, addr0, addr1)
     cp.wait_for ('verack')
-    if G.args.getblocks:
-        W ('downloading block names...\n')
-        names = cp.getblocks()
-    else:
-        W ('downloading headers...\n')
-        names = cp.getheaders()
+    LOG ('downloading headers...')
+    hashes = [G.ledger.block_name]
+    names = cp.getheaders (hashes)
+    LOG (len(names), 'headers')
     start = time.time()
-    W ('got %d names...\n' % (len(names),))
-    WB ('[BLOCKNUM] ')
-    WR ('(MB/s)\n')
-    for i in range (0, len (names), 50):
+    coro.spawn (rate_thread)
+    LOG ('got %d names...' % (len(names),))
+    # XXX DEBUG XXX
+    #names = names[:100001]
+    # XXX DEBUG XXX
+    # Note: skip the first name, we already have it.
+    for i in range (1, len (names), 50):
         chunk = names[i:i+50]
         cp.getdata ([(OBJ_BLOCK, name) for name in chunk])
         in_flight += len(chunk)
@@ -158,24 +157,7 @@ def go (G):
             (float(total_bytes) / MB) / (stop - start)
         )
     )
-    G.block_db.dump_metadata()
-    coro.set_exit()
-
-def write_thread():
-    global in_flight, total_bytes
-    n = 0
-    while 1:
-        data = block_fifo.pop()
-        b = BLOCK()
-        b.unpack (data)
-        total_bytes += len(data)
-        in_flight -= 1
-        G.block_db.write_block (b.get_name(), b)
-        if in_flight < G.args.inflight:
-            in_flight_cv.wake_all()
-        n += 1
-        if n % 1000 == 0:
-            WB ('[%d]' % (n,))
+    G.done_cv.wake_all()
 
 total_bytes = 0
 
@@ -188,8 +170,26 @@ def rate_thread():
         n0 = n1
         WR ('(%.2f)' % (delta / 10485760.))
 
-def log (subject, *data):
-    W ('log: %s %r\n' % (subject, data))
+def main (G):
+    G.done_cv = coro.condition_variable()
+    if G.args.leveldb:
+        utxomap = UTXO_leveldb
+    else:
+        utxomap = UTXO_Scan_Map
+    if os.path.exists (os.path.join (G.args.base, LedgerState.save_path)):
+        # XXX allow leveldb here
+        G.ledger = LedgerState (load=True, utxo_factory=UTXO_Map)
+    else:
+        LOG ('building a new utxo database using UTXO_Scan_Map')
+        G.ledger = LedgerState (load=False, utxo_factory=utxomap)
+    # must feed at least the genesis block in...
+    if G.ledger.height == -1:
+        G.ledger.feed_block (genesis, 0)
+    coro.spawn (pull_blocks, G)
+    G.done_cv.wait()
+    LOG ('saving final UTXO database...')
+    G.ledger.save_state()
+    coro.set_exit()
 
 G = GlobalState()
 
@@ -197,24 +197,20 @@ p = argparse.ArgumentParser (description='Pull a copy of the blockchain from ano
 p.add_argument ('connect', help="connect to this address", metavar='IP:PORT')
 p.add_argument ('-i', '--inflight', help='number of blocks in flight.', type=int, default=20)
 p.add_argument ('-b', '--base', help='data directory', default='/usr/local/caesure', metavar='PATH')
-p.add_argument ('-g', '--getblocks', action='store_true', help='use getblocks rather than getheaders')
-p.add_argument ('-v', '--verbose', action='store_true', help='verbose protocol info')
+p.add_argument ('-v', '--verbose', help='verbose output', action='store_true')
+p.add_argument ('-l', '--leveldb', help='use leveldb', action='store_true')
 
 G.args = p.parse_args()
 G.args.packet = False
-G.log = log
+G.log = LOG
 G.verbose = G.args.verbose
-G.block_db = BlockDB()
 
-block_fifo = coro.fifo()
 # tried to use inverted_semaphore here, couldn't get it to work.
 in_flight = 0
 in_flight_cv = coro.condition_variable()
 
 import coro.backdoor
-coro.spawn (coro.backdoor.serve, unix_path='/tmp/chainpuller.bd')
+coro.spawn (coro.backdoor.serve, unix_path='/tmp/utxo_puller.bd')
 
-coro.spawn (go, G)
-coro.spawn (rate_thread)
-coro.spawn (write_thread)
+coro.spawn (main, G)
 coro.event_loop()

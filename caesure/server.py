@@ -16,7 +16,6 @@ from caesure import ledger
 from caesure import proto
 from caesure import script
 from caesure.bitcoin import *
-from caesure.asn1_log import ASN1_Logger
 from caesure.connection import BaseConnection, parse_addr_arg
 from caesure.addrcache import AddressCache
 
@@ -371,7 +370,7 @@ class Connection (BaseConnection):
         # out of order a no-no.
         #coro.spawn (self.send_blocks, blocks)
         self.send_blocks (blocks)
-        
+
     def send_blocks (self, blocks):
         for name in blocks:
             self.send_packet (
@@ -518,7 +517,7 @@ class TransactionPool:
         return name in self.pool
 
     def add (self, tx):
-        return 
+        return
         if tx.name not in self.pool:
             try:
                 i = 0
@@ -698,7 +697,7 @@ def main1 (args, G):
     coro.spawn (new_block_thread)
     coro.spawn (new_connection_thread)
     coro.spawn (G.recent_blocks.save_ledger_thread)
-    
+
 def main (args, global_state):
     global G
 
@@ -730,7 +729,9 @@ def main (args, global_state):
 
     try:
         coro.event_loop()
-    except:
+    except Exception:
         LOG.exc()
+    except SystemExit:
+        pass
     finally:
         LOG ('caesure', 'stopping')

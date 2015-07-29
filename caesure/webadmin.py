@@ -241,7 +241,7 @@ class handler:
         PUSH (
             space2 + A ('reload', href="/admin/reload"),
             space2 + A ('status', href="/admin/status"),
-            space2 + A ('connections', href="/admin/connections"),            
+            space2 + A ('connections', href="/admin/connections"),
             space2 + A ('blocks', href="/admin/block"),
             space2 + A ('pool', href="/admin/pool"),
             space2 + A ('ledger', href="/admin/ledger"),
@@ -286,9 +286,9 @@ class handler:
             PUSH (elemz ('br'))
         PUSH (H2 ('connections'))
         PUSH (autotable ([
-            ('in_conn_sem.avail', G.in_conn_sem.avail),
-            ('out_conn_sem.avail', G.out_conn_sem.avail),
-            ('|connections|', len(G.connection_map)),
+            ('in_conn_sem.avail', self.G.in_conn_sem.avail),
+            ('out_conn_sem.avail', self.G.out_conn_sem.avail),
+            ('|connections|', len(self.G.connection_map)),
             ])
         )
 
@@ -492,7 +492,7 @@ class handler:
                 ('live', bcrepr (lx.total)),
                 ('lost', bcrepr (lx.lost)),
                 ('fees', bcrepr (lx.fees)),
-                ('|utxo|', len(lx.outpoints)),
+                ('|utxo|', lx.outpoints.get_size()),
             ])
 
         for height, lx in leaves:

@@ -29,12 +29,12 @@ class BlockBroker:
             ob = self.q.pop()
             for sub in self.subs:
                 sub.push (ob)
-    
+
     def subscribe (self):
         ob = coro.fifo()
         self.subs.add (ob)
         return ob
-        
+
     def unsubscribe (self, ob):
         self.subs.remove (ob)
 

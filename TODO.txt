@@ -3,13 +3,29 @@
 TODO
 ----
 
-* getheaders.
+* txn classifier in cython.
 * hardening.
 * sanity check hashes of known blocks
 * script for downloading bootstrap.dat & matching utxo.bin.
 * match compiler
 * investigate using our own copy of ripemd160 (using the one in 'hashlib' is a back-door openssl dep.)
-* disk i/o thread for access to blocks.bin.  
+* disk i/o thread for access to blocks.bin.
+
+pruned node
+===========
+
+I'm thinking of supporting a fully pruned node that starts with a utxo
+snapshot, and accumulates blocks from that point forward.  The blocks
+can be thought of as 'diffs' against the utxo database.  It should
+then be possible to synchronize between (trusted) nodes by merely
+copying the utxo database over the network (probably with TLS).
+
+* build utxo directly from chain puller.
+* 'recent blocks' database (maybe just mod the RecentBlocks class).
+* asn.1 spec & comms for new protocol.
+* demonstrate sync via utxo.
+* mempool.
+
 
 ledger
 ======
@@ -25,19 +41,10 @@ A faster, stl-based data structure is used for the initial scan.  The
 plan is to distribute paired 'blocks.dat' and 'utxo.bin' files via
 bittorrent.
 
-memory requirements: Oct 2014, ~3GB.
+memory requirements: July 2015, ~4GB.
 
 
 in progress
 -----------
 * ledger: final task remains - connecting the many-worlds ledger to txn flow.
-* test suites.  
-
-done
-----
-* getdata/blocks: before txns, let's forward blocks.
-* proper package installation and directory for blocks.bin etc...
-* use html_help module.
-* getblocks.
-* p2sh.
-* SIGHASH_NONE, etc..
+* test suites.

@@ -8,7 +8,8 @@ import sys
 from caesure.script import pprint_script, OPCODES, parse_script, is_unspendable, VerifyError
 from caesure.block_db import BlockDB
 from caesure.bitcoin import *
-from caesure.txfaa import UTXO_Map, UTXO_Scan_Map
+from caesure._utxo import UTXO_Map
+from caesure._utxo_scan import UTXO_Scan_Map
 
 import coro
 from coro.log import Facility
@@ -132,8 +133,8 @@ class LedgerState:
     save_path = 'utxo.bin'
     do_yields = True
 
-    def __init__ (self, load=False):
-        self.outpoints = UTXO_Map()
+    def __init__ (self, load=False, utxo_factory=UTXO_Map):
+        self.outpoints = utxo_factory()
         self.block_name = ZERO_NAME
         self.height = -1
         self.total = 0
@@ -143,6 +144,7 @@ class LedgerState:
             from __main__ import G
             save_path = os.path.join (G.args.base, self.save_path)
             self.load_state (save_path)
+            self.verify_sort()
 
     def clone (self):
         ob = LedgerState()
@@ -165,7 +167,21 @@ class LedgerState:
             total += len(v)
         return total
 
-    cache_version = 3
+    def dump (self, path='utxo.txt'):
+        f = open (path, 'wb')
+        for item in self.outpoints:
+            indent = item.depth * '  '
+            f.write ('%s%s %d\n' % (indent, item.txname.encode ('hex'), len(item)))
+        f.close()
+
+    def verify_sort (self):
+        last = b''
+        for item in self.outpoints:
+            if item.txname <= last:
+                LOG ('dup!', item.txname.encode ('hex'))
+            last = item.txname
+
+    cache_version = 4
 
     def save_state (self):
         from coro.asn1.data_file import DataFileWriter
@@ -174,6 +190,7 @@ class LedgerState:
         f = open (save_path + '.tmp', 'wb')
         df = DataFileWriter (f)
         t0 = timer()
+        utxo_size = self.outpoints.get_size()
         df.write_object ([
             self.cache_version,
             self.height,
@@ -181,17 +198,21 @@ class LedgerState:
             self.total,
             self.lost,
             self.fees,
-            len(self.outpoints)
+            utxo_size,
         ])
-        n = 0
+        n0 = 0
+        n1 = 0
         for item in self.outpoints:
-            df.write_object (item)
-            n += 1
-            if n % 1000 == 999:
+            outs = [ x for x in item ]
+            df.write_object ((item.txname, outs))
+            n0 += 1
+            n1 += len(outs)
+            if n0 % 1000 == 999:
                 coro.yield_slice()
         f.close()
+        assert (n0, n1) == utxo_size
         os.rename (save_path + '.tmp', save_path)
-        LOG ('saved outpoints', len(self.outpoints), n, t0.end())
+        LOG ('saved outpoints', utxo_size, t0.end())
 
     def load_state (self, path=None):
         from coro.asn1.data_file import DataFileReader
@@ -208,20 +229,21 @@ class LedgerState:
                 LOG ('old cache version, ignoring')
                 return
             assert (info[0] == self.cache_version)  # version
-            [_, self.height, self.block_name, self.total, self.lost, self.fees, size] = info
+            # XXX remove mistaken entry before size
+            [_, self.height, self.block_name, self.total, self.lost, self.fees, _, size] = info
             LOG ('cache', self.height, size)
             self.block_name = Name (self.block_name)
             n = [0]
             df.next = df.read_object
-            self.outpoints.build (df, size)
+            self.outpoints.load (df, size[0])
             f.close()
-            LOG ('cache', 'stop', len(self.outpoints), n[0])
+            LOG ('cache', 'stop', size, n[0])
             LOG ('cache', self.height, repr(self.block_name))
         except IOError:
             pass
         LOG ('cache', 'stop', t0.end())
 
-    def store_outputs (self, tx):
+    def store_outputs (self, tx, timestamp):
         output_sum = 0
         outputs = []
         for i, (amt, lock_script) in enumerate (tx.outputs):
@@ -230,37 +252,48 @@ class LedgerState:
             if not is_unspendable (lock_script):
                 outputs.append ((i, amt, lock_script))
             output_sum += amt
-        self.outpoints.new_entry (str(tx.name), outputs)
+        self.outpoints.push (bytes(tx.name), outputs)
         self.total += output_sum
         return output_sum
 
     def get_utxo (self, name, index):
-        return self.outpoints.get_utxo (name, index)
+        return self.outpoints.get (name, index)
 
     def feed_tx (self, index, tx, timestamp, verify=False):
         input_sum = 0
         for j in range (len (tx.inputs)):
             (outpoint, index), script, sequence = tx.inputs[j]
-            outstr = str(outpoint)
-            amt, lock_script = self.outpoints.pop_utxo (outstr, index)
+            outstr = bytes(outpoint)
+            try:
+                amt, lock_script = self.outpoints.pop (outstr, index)
+            except KeyError:
+                import pdb; pdb.set_trace()
             if verify:
                 try:
                     tx.verify (j, lock_script, timestamp)
                 except VerifyError:
-                    self.outpoints.new_entry (outstr, [(index, amt, lock_script)])
+                    self.outpoints.push (outstr, [(index, amt, lock_script)])
                     raise
             input_sum += amt
             if self.do_yields and j % 20 == 19:
                 coro.yield_slice()
-        output_sum = self.store_outputs (tx)
+        output_sum = self.store_outputs (tx, timestamp)
         return input_sum, output_sum
+
+    # two duplicate coinbase txns:
+    # d5d27987d2a3dfc724e359870c6644b40e497bdc0589a033220fe15429d88599 91812 91842
+    # e3bf3d07d4b0375638d5f1db5255fe07ba2c4cb067cd81b84ee974b6585fb468 91722 91880
 
     def feed_block (self, b, height, verify=False):
         if b.prev_block != self.block_name:
             raise ValueError (b.prev_block, self.block_name)
-        # assume coinbase is ok for now
         tx0 = b.transactions[0]
-        reward0 = self.store_outputs (tx0)
+        # watch for the two sets of duplicate coinbases.
+        if bytes(tx0.name) not in self.outpoints:
+            reward0 = self.store_outputs (tx0, b.timestamp)
+        else:
+            assert height in (91842, 91880)
+            reward0 = compute_reward (height)
         fees = 0
         for i, tx in enumerate (b.transactions):
             if i == 0:
@@ -304,7 +337,7 @@ def catch_up (G):
 
     ledger = LedgerState (load=True)
 
-    if len(ledger.outpoints) == 0:
+    if ledger.outpoints.get_size() == (0, 0):
         LOG ('no cache')
         ledger.outpoints = UTXO_Scan_Map()
         fast_scan = True
@@ -315,7 +348,7 @@ def catch_up (G):
     names = get_names()
     #if fast_scan:
     #    # TRIM FOR TESTING ONLY
-    #    names = names[:225430]
+    #    names = names[:100000]
     # drop back by a 20-block horizon
     most_names = names[:-20]
     i = 0
@@ -375,5 +408,5 @@ if __name__ == '__main__':
         import coro
         import coro.backdoor
         coro.spawn (catch_up, G)
-        coro.spawn (coro.backdoor.serve, 8025)
+        coro.spawn (coro.backdoor.serve, unix_path='/tmp/ledger.bd')
         coro.event_loop()
