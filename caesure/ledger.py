@@ -229,8 +229,7 @@ class LedgerState:
                 LOG ('old cache version, ignoring')
                 return
             assert (info[0] == self.cache_version)  # version
-            # XXX remove mistaken entry before size
-            [_, self.height, self.block_name, self.total, self.lost, self.fees, _, size] = info
+            [_, self.height, self.block_name, self.total, self.lost, self.fees, size] = info
             LOG ('cache', self.height, size)
             self.block_name = Name (self.block_name)
             n = [0]
