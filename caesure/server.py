@@ -104,6 +104,7 @@ class BlockHoover:
         while 1:
             name = self.queue.pop()
             if name is None:
+                LOG ('hoover', 'queue empty')
                 break
             else:
                 LOG ('hoover', 'popped', repr(name))
@@ -118,27 +119,30 @@ class BlockHoover:
             t0 = coro.now_usec
             LOG ('hoover', 'asked', strname)
             block = conn.get_block (name)
+            LOG ('hoover', 'recv', strname)
             self.in_flight_sem.release(1)
             self.add_block (block)
-            LOG ('hoover', 'recv', strname)
         except coro.TimeoutError:
             # let some other connection try it...
             LOG ('hoover', 'retry', strname)
-            self.push (name)
+            self.push_front (name)
             self.requested.remove (name)
-        except:
-            LOG ('hoover', 'error', coro.compact_traceback())
+        except Exception:
+            LOG.exc()
 
     def add_block (self, b):
+        # this block is ready to be chained
         self.ready[b.prev_block] = b
         if b.name in self.requested:
             self.requested.remove (b.name)
         # we may have several blocks waiting to be chained
         #  in by the arrival of a missing link...
+        n = 0
         while 1:
             if G.block_db.has_key (b.prev_block) or (b.prev_block == block_db.ZERO_NAME):
                 del self.ready[b.prev_block]
                 self.block_to_db (b.name, b)
+                n += 1
                 if self.ready.has_key (b.name):
                     b = self.ready[b.name]
                 else:
@@ -146,6 +150,8 @@ class BlockHoover:
             else:
                 break
             coro.yield_slice()
+        if n > 1:
+            LOG ('hoover', 'chained', n)
 
     def block_to_db (self, name, b):
         try:
