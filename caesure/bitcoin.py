@@ -11,8 +11,7 @@ from pprint import pprint as pp
 import caesure.proto
 
 from caesure.proto import base58_encode, base58_decode, hexify, Name
-from caesure.script import verifying_machine, verifying_machine_p2sh, pprint_script, unrender_int
-from caesure._script import parse_script, ScriptError
+from caesure.script import verifying_machine, verifying_machine_p2sh, pprint_script, unrender_int, parse_script, ScriptError
 
 def P (msg):
     sys.stdout.write (msg)
@@ -237,8 +236,7 @@ class BLOCK (caesure.proto.BLOCK):
         elif (time.time() - self.timestamp) < (-60 * 60 * 2):
             raise BadBlock ("block from the future")
         else:
-            for i in range (len (self.transactions)):
-                tx = self.transactions[i]
+            for i, tx in enumerate (self.transactions):
                 if i == 0 and (len (tx.inputs) != 1 or tx.inputs[0][0] != NULL_OUTPOINT):
                     raise BadBlock ("first transaction not a generation")
                 # XXX check block reward
@@ -251,7 +249,7 @@ class BLOCK (caesure.proto.BLOCK):
                 for value, _ in tx.outputs:
                     if value > MAX_MONEY:
                         raise BadBlock ("too much money")
-                    # XXX not checking SIGOP counts since we don't really implement the script engine.
+                    # XXX check SIGOP counts.
             # check merkle hash
             if self.merkle_root != self.get_merkle_hash():
                 raise BadBlock ("merkle hash doesn't match")
