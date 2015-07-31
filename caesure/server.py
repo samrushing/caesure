@@ -71,8 +71,11 @@ class BlockHoover:
                 # start hoovering
                 coro.spawn (self.go, conn)
 
-    def push (self, name):
-        self.queue.push (name)
+    def push (self, name, front=False):
+        if front:
+            self.queue.push_front (name)
+        else:
+            self.queue.push (name)
         self.qset.add (name)
 
     def go (self, c):
@@ -120,12 +123,12 @@ class BlockHoover:
             LOG ('hoover', 'asked', strname)
             block = conn.get_block (name)
             LOG ('hoover', 'recv', strname)
-            self.in_flight_sem.release(1)
             self.add_block (block)
+            self.in_flight_sem.release(1)
         except coro.TimeoutError:
             # let some other connection try it...
             LOG ('hoover', 'retry', strname)
-            self.push_front (name)
+            self.push (name, front=True)
             self.requested.remove (name)
         except Exception:
             LOG.exc()
