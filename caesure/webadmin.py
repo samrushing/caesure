@@ -247,6 +247,7 @@ class handler:
             space2 + A ('ledger', href="/admin/ledger"),
             space2 + A ('connect', href="/admin/connect"),
             space2 + A ('shutdown', href="/admin/shutdown"),
+            space2 + A ('saveutxo', href="/admin/saveutxo"),
         )
 
     def cmd_status (self, request, PUSH, parts):
@@ -341,6 +342,13 @@ class handler:
             self.dump_tx (PUSH, b.transactions[i], i)
         PUSH (elem1 ('table'))
 
+    # XXX move to ledger.py
+    def best_leaf (self):
+        leaves = list (self.G.recent_blocks.leaves)
+        leaves.sort (lambda a,b: cmp (a.height, b.height))
+        best = leaves[-1]
+        return best
+
     def cmd_block (self, request, PUSH, parts):
         db = self.G.block_db
         space2 = ent ('nbsp') * 2
@@ -387,6 +395,7 @@ class handler:
             self.dump_block (PUSH, b, num, name)
 
     def dump_tx (self, PUSH, tx, tx_num):
+        leaf = self.best_leaf()
         PUSH (
             elem0 ('tr'),
             TD (tx_num),
@@ -402,6 +411,11 @@ class handler:
                 script = describe_iscript (parse_script (script))
             PUSH (trow (shorten (outpoint.hex()), index, script))
         PUSH (elems1 ('table', 'td'))
+        if bytes(tx.name) in leaf.outpoints:
+            im = leaf.outpoints.get_tx (bytes (tx.name))
+            unspent = { x[0] for x in im }
+        else:
+            im = None
         PUSH (elem0 ('td'), elem0 ('table'))
         for i in range (len (tx.outputs)):
             value, pk_script = tx.outputs[i]
@@ -411,8 +425,9 @@ class handler:
             else:
                 kind = kind + ':'
             k = '%s%s' % (kind, addr)
+            if im is not None and i in unspent:
+                k += ' (unspent)'
             PUSH (trow (i, bcrepr (value), k))
-        #RP ('</table></td><td>%s</td></tr>' % tx.lock_time,)
         PUSH (elems1 ('table', 'td', 'tr'))
 
     def cmd_pool (self, request, PUSH, parts):
@@ -513,12 +528,17 @@ class handler:
         PUSH (''.join (r))
         PUSH (elem1 ('table'))
 
-    def cmd_shutdown (self, request, PUSH, parts):
-        request.push (H3 ('Shutting down...'))
-        request.done()
-        coro.sleep_relative (1)
+    def _do_shutdown (self):
+        coro.sleep_relative (5)
         coro.set_exit()
 
+    def cmd_shutdown (self, request, PUSH, parts):
+        request.push (H3 ('Shutting down...'))
+        coro.spawn (self._do_shutdown)
+
+    def cmd_saveutxo (self, request, PUSH, parts):
+        request.push (H3 ('starting a save operation...'))
+        coro.spawn (G.recent_blocks.root.save_state)
 
 def chain_gen (name):
     from __main__ import G
