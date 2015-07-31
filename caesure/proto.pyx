@@ -44,7 +44,7 @@ cdef class Name:
     def __hex__ (self):
         return flip_hexify (self.name, 32)
     def hex (self):
-        return flip_hexify (self.name, 32)        
+        return flip_hexify (self.name, 32)
     def __repr__ (self):
         return '<%s>' % (flip_hexify (self.name, 32))
 
@@ -131,7 +131,7 @@ cdef class pkt:
         self.d = data
         self.len = len(data)
         self.pos = 0
-    
+
     cdef need (self, int n):
         if self.pos + n > self.len:
             raise IndexError (self.len, self.pos +n)
@@ -152,14 +152,14 @@ cdef class pkt:
     cdef uint16_t u16 (self) except? -1:
         cdef uint16_t r
         self.need (2)
-        r = (self.d[self.pos+1] << 8) | self.d[self.pos] 
+        r = (self.d[self.pos+1] << 8) | self.d[self.pos]
         self.pos += 2
         return r
 
     cdef uint16_t net_u16 (self) except? -1:
         cdef uint16_t r
         self.need (2)
-        r = (self.d[self.pos+0] << 8) | self.d[self.pos+1] 
+        r = (self.d[self.pos+0] << 8) | self.d[self.pos+1]
         self.pos += 2
         return r
 
@@ -243,7 +243,7 @@ cdef class VERSION:
     cdef public uint32_t start_height
     cdef public bint relay
     cdef public bytes extra
-    
+
     def unpack (self, bytes data):
         cdef pkt p = pkt (data)
         self.version = p.u32()
@@ -429,7 +429,7 @@ cdef class TX:
         for i in range (txout_count):
             self.outputs.append (self.unpack_output (p))
         self.lock_time = p.u32()
-            
+
     def pack (self):
         cdef int i
         cdef list result = [
@@ -467,12 +467,12 @@ cdef class BLOCK:
     cdef public Name prev_block
     cdef public Name merkle_root
     cdef public uint32_t timestamp
-    cdef public uint32_t bits    
+    cdef public uint32_t bits
     cdef public uint32_t nonce
     cdef public list transactions
     cdef readonly bytes raw
     cdef readonly Name name
-    
+
     def make_TX (self):
         return TX()
 
@@ -561,7 +561,7 @@ def unpack_addr (bytes data):
     for i in range (count):
         result.append ((p.u32(), p.unpack_net_addr()))
     return result
-        
+
 def unpack_getdata (bytes data):
     return unpack_inv (data)
 
