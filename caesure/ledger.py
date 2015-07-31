@@ -248,7 +248,7 @@ class LedgerState:
         for i, (amt, lock_script) in enumerate (tx.outputs):
             #if len(lock_script) > 500:
             #    W ('%r len(script) = %d\n' % (tx.name, len(lock_script)))
-            if not is_unspendable (lock_script):
+            if amt > 0 and not is_unspendable (lock_script):
                 outputs.append ((i, amt, lock_script))
             output_sum += amt
         self.outpoints.push (bytes(tx.name), outputs)
