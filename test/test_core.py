@@ -26,11 +26,6 @@ def frob (s):
             r.append (ch)
     return ''.join (r)
 
-where = '/Users/rushing/src/bitcoin/src/test/data/'
-
-valid   = list (enumerate (json.loads (frob (open (os.path.join (where, 'script_valid.json'), 'rb').read()))))
-invalid = list (enumerate (json.loads (frob (open (os.path.join (where, 'script_invalid.json'), 'rb').read()))))
-
 import re
 digits = re.compile ('-?[0-9]+$')
 
@@ -140,6 +135,9 @@ def unit_tests():
         for i, kind, fail, why in fails:
             W ('  %d %s %r, %r\n' % (i, kind, fail, why))
 
+def load_json_test_file (path):
+    return list (enumerate (json.loads (frob (open (path, 'rb').read()))))
+
 if __name__ == '__main__':
     import argparse
     p = argparse.ArgumentParser (description='run bitcoin-core unit script tests')
@@ -147,8 +145,13 @@ if __name__ == '__main__':
     p.add_argument ('-i', type=int, action='append', help='run a specific invalid test by number')
     p.add_argument ('-d', action='store_true', help='debug')
     p.add_argument ('--verbose', action='store_true', help='dump each script test before execution')
+    p.add_argument ('where', type=str, help='location of json test files', metavar='PATH')
+
     args = p.parse_args()
     verbose = args.verbose
+
+    valid = load_json_test_file (os.path.join (args.where, 'script_valid.json'))
+    invalid = load_json_test_file (os.path.join (args.where, 'script_invalid.json'))
 
     if args.v is not None:
         tests = []
