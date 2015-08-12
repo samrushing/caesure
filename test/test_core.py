@@ -28,8 +28,8 @@ def frob (s):
 
 where = '/Users/rushing/src/bitcoin/src/test/data/'
 
-valid   = json.loads (frob (open (os.path.join (where, 'script_valid.json'), 'rb').read()))
-invalid = json.loads (frob (open (os.path.join (where, 'script_invalid.json'), 'rb').read()))
+valid   = list (enumerate (json.loads (frob (open (os.path.join (where, 'script_valid.json'), 'rb').read()))))
+invalid = list (enumerate (json.loads (frob (open (os.path.join (where, 'script_invalid.json'), 'rb').read()))))
 
 import re
 digits = re.compile ('-?[0-9]+$')
@@ -80,35 +80,59 @@ def do_one (unlock_script, lock_script, flags):
     m.sigpushonly = 'SIGPUSHONLY' in flags
     m.eval_script (unlock_script, lock_script)
 
+def dump_script (unlock, lock):
+    u0 = parse_script (unlock)
+    l0 = parse_script (lock)
+    u1 = pprint_script (u0)
+    l1 = pprint_script (l0)
+    W ('bytes:\n')
+    W ('  unlock: %s\n' % (unlock.encode('hex'),))
+    W ('    lock: %s\n' % (lock.encode('hex'),))
+    W ('parsed:\n')
+    W ('  unlock: %r\n' % (u0,))
+    W ('    lock: %r\n' % (l0,))
+    W ('pprint:\n')
+    W ('  unlock: %r\n' % (u1,))
+    W ('    lock: %r\n' % (l1,))
+
 def unit_tests():
+    global verbose
     W ('%d valid tests...\n' % (len(valid),))
     fails = []
-    for i, v in enumerate (valid):
+    for num, v in valid:
         v = [bytes(x) for x in v]
         if len(v) >= 2:
             flags = v[2].split(',')
+            if verbose:
+                W ('--- valid %d ---\n' % (num,))
+                W ('json:\n')
+                W ('  unlock: %r\n' % (v[0],))
+                W ('    lock: %r\n' % (v[1],))
             unlock = parse_test (v[0])
             lock = parse_test (v[1])
-            #print i, v
-            #print pprint_script (parse_script (unlock))
-            #print pprint_script (parse_script (lock))
+            if verbose:
+                dump_script (unlock, lock)
             try:
                 do_one (unlock, lock, flags)
             except Exception as e:
-                fails.append ((i, 'valid', v, e))
+                fails.append ((num, 'valid', v, e))
     W ('%d invalid tests...\n' % (len(invalid),))
-    for i, v in enumerate (invalid):
+    for num, v in invalid:
         v = [bytes(x) for x in v]
         if len(v) >= 2:
             flags = v[2].split(',')
+            if verbose:
+                W ('--- invalid %d ---\n' % (num,))
+                W ('json:\n')
+                W ('  unlock: %r\n' % (v[0],))
+                W ('    lock: %r\n' % (v[1],))
             try:
                 unlock = parse_test (v[0])
                 lock = parse_test (v[1])
-                #print i, v
-                #print pprint_script (parse_script (unlock))
-                #print pprint_script (parse_script (lock))
+                if verbose:
+                    dump_script (unlock, lock)
                 do_one (unlock, lock, flags)
-                fails.append ((i, 'invalid', v, None))
+                fails.append ((num, 'invalid', v, None))
             except:
                 pass
     if fails:
@@ -116,22 +140,15 @@ def unit_tests():
         for i, kind, fail, why in fails:
             W ('  %d %s %r, %r\n' % (i, kind, fail, why))
 
-def pprint_unit_tests():
-    for v in valid:
-        sig, pub = v[:2]
-        sig0 = parse_script (sig)
-        pub0 = parse_script (pub)
-        W ('%r\n%r\n' % (sig0, pub0))
-        W ('%r\n%r\n' % (pprint_script (sig0), pprint_script (pub0)))
-        W ('-----------\n')
-
 if __name__ == '__main__':
     import argparse
     p = argparse.ArgumentParser (description='run bitcoin-core unit script tests')
     p.add_argument ('-v', type=int, action='append', help='run a specific valid test by number')
     p.add_argument ('-i', type=int, action='append', help='run a specific invalid test by number')
     p.add_argument ('-d', action='store_true', help='debug')
+    p.add_argument ('--verbose', action='store_true', help='dump each script test before execution')
     args = p.parse_args()
+    verbose = args.verbose
 
     if args.v is not None:
         tests = []
@@ -149,6 +166,5 @@ if __name__ == '__main__':
 
     if args.d:
         verifying_machine.debug = True
-        
+
     unit_tests()
-    #pprint_unit_tests()
